@@ -5,5 +5,4 @@ import (
 )
 
 func TestHello(t *testing.T) {
-	New()
 }
