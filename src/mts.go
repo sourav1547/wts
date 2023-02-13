@@ -170,57 +170,19 @@ func (m *MTS) mts_combine(sigmas []Sig) MTSSig {
 
 	for i := 1; i <= m.n-t; i++ {
 		idx := fr.NewElement(uint64(i))
-		idx.Sub(&zero, &idx)
-		idxs[t+i-1] = idx
+		idxs[t+i-1].Sub(&zero, &idx)
 	}
 
 	lags := get_lag_at(0, idxs)
 
-	var sk fr.Element
-	for i := 0; i < m.n; i++ {
-		var prod fr.Element
-		prod.Mul(&lags[i], &m.crs.secret_keys[i])
-		sk.Add(&sk, &prod)
-	}
-	fmt.Println(sk.Equal(&m.crs.sk))
-	var ppk bls.G1Jac
-	ppk.ScalarMultiplication(&m.g1, sk.ToBigInt(big.NewInt(0)))
-
-	if ppk.Equal(&m.crs.vk) {
-		fmt.Println("Public keys match")
-	}
-
-	var pk_test bls.G1Jac
-	pk_affine := make([]bls.G1Affine, t)
-	var vk_test bls.G1Jac
-
-	for i := 0; i < t; i++ {
-		pk_affine[i].FromJacobian(&m.crs.public_keys[i])
-		var temp bls.G1Jac
-		temp.ScalarMultiplication(&m.crs.public_keys[i], lags[i].ToBigInt(big.NewInt(0)))
-		vk_test.AddAssign(&temp)
-
-		t_sk := m.crs.secret_keys[i].ToBigInt(big.NewInt(0))
-		temp.ScalarMultiplication(&m.g1, t_sk)
-
-		if temp.Equal(&m.crs.public_keys[i]) {
-			fmt.Println("vki match")
-		}
-	}
-
-	pk_test.MultiExp(pk_affine, lags[:t], ecc.MultiExpConfig{})
-	if pk_test.Equal(&m.crs.vk) {
-		fmt.Println("vk match")
-	}
-
-	mpriv.MultiExp(sigs, lags[:t], ecc.MultiExpConfig{})
-	gpub.MultiExp(m.crs.coms[:(m.n-t)], lags[t:], ecc.MultiExpConfig{})
-	gpubk.MultiExp(m.crs.coms_k[:(m.n-t)], lags[t:], ecc.MultiExpConfig{})
+	mpriv.MultiExp(sigs, lags[:t], ecc.MultiExpConfig{ScalarsMont: true})
+	gpub.MultiExp(m.crs.coms[:(m.n-t)], lags[t:], ecc.MultiExpConfig{ScalarsMont: true})
+	gpubk.MultiExp(m.crs.coms_k[:(m.n-t)], lags[t:], ecc.MultiExpConfig{ScalarsMont: true})
 
 	return MTSSig{
 		gpub:  gpub,
 		mpriv: mpriv,
-		gpubk: pk_test,
+		gpubk: gpubk,
 	}
 }
 

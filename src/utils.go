@@ -25,9 +25,7 @@ func get_lag_at(at int, indices []fr.Element) []fr.Element {
 		deno = fr.NewElement(1)
 		for ii := 0; ii < n; ii++ {
 			if i != ii {
-				i_fr := fr.NewElement(uint64(i))
-				ii_fr := fr.NewElement(uint64(ii))
-				diff.Sub(&i_fr, &ii_fr)
+				diff.Sub(&indices[i], &indices[ii])
 				deno.Mul(&deno, &diff)
 			}
 		}

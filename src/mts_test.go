@@ -1,7 +1,6 @@
 package wts
 
 import (
-	"fmt"
 	"math/big"
 	"testing"
 
@@ -66,7 +65,6 @@ func TestLag(t *testing.T) {
 		prod.Mul(&res[i], &m.crs.secret_keys[i])
 		sk.Add(&sk, &prod)
 	}
-	fmt.Println(sk.Equal(&m.crs.sk))
 	var ppk bls.G1Jac
 	ppk.ScalarMultiplication(&m.g1, sk.ToBigInt(big.NewInt(0)))
 	assert.Equal(t, ppk, m.crs.vk)
@@ -74,7 +72,8 @@ func TestLag(t *testing.T) {
 
 func TestMTSCombine(t *testing.T) {
 	g1, g2, g1_aff, g2_aff := bls.Generators()
-	n := 1
+	n := 4
+	ths := n - 1
 
 	m := MTS{
 		n:      n,
@@ -105,19 +104,6 @@ func TestMTSCombine(t *testing.T) {
 			sigma: m.mts_psign(msg, parties[i]),
 		}
 	}
-	sigma := m.mts_combine(signs)
-
-	var s bls.G2Jac
-	var ppk bls.G1Jac
-	s.ScalarMultiplication(&ro_msg_jac, m.crs.sk.ToBigInt(big.NewInt(0)))
-	ppk.ScalarMultiplication(&m.g1, m.crs.sk.ToBigInt(big.NewInt(0)))
-	// assert.Equal(t, s, sigma.mpriv)
-	if s.Equal(&sigma.mpriv) {
-		fmt.Println("sig match")
-	}
-
-	if ppk.Equal(&sigma.gpubk) {
-		fmt.Println("sig match")
-	}
-	assert.Equal(t, m.mts_gverify(ro_msg, sigma, n-1), true)
+	sigma := m.mts_combine(signs[:ths])
+	assert.Equal(t, m.mts_gverify(ro_msg, sigma, ths), true)
 }
