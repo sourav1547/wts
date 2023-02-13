@@ -11,12 +11,12 @@ import (
 )
 
 type MTSPublicParams struct {
-	coms        []bls.G1Affine // g^{p(-1)},...,g^{p(-n)}
-	coms_k      []bls.G1Affine // g^{p(-1)k},...,g^{p(-n)k}
-	secret_keys []fr.Element   // signing keys of signers
-	public_keys []bls.G1Jac    // verification keys of signers
-	gk          bls.G2Jac      // g2^k
-	vk          bls.G1Jac      // g^{p(0)}
+	coms        []bls.G1Affine   // g^{p(-1)},...,g^{p(-n)}
+	coms_ks     [][]bls.G1Affine // g^{p(-1)k},...,g^{p(-n)k}
+	secret_keys []fr.Element     // signing keys of signers
+	public_keys []bls.G1Jac      // verification keys of signers
+	gks         []bls.G2Jac      // g2^k
+	vk          bls.G1Jac        // g^{p(0)}
 	vk_aff      bls.G1Affine
 	sk          fr.Element
 }
@@ -51,10 +51,24 @@ type MTS struct {
 	g2_aff     bls.G2Affine
 }
 
-func (m *MTS) mts_key_gen() {
+func NewMTS(n int) MTS {
+	g1, g2, g1_aff, g2_aff := bls.Generators()
+
+	m := MTS{
+		n:      n,
+		g1:     g1,
+		g1_aff: g1_aff,
+		g2:     g2,
+		g2_aff: g2_aff,
+	}
 	m.g1_inv.Neg(&m.g1)
 	m.g1_inv_aff.FromJacobian(&m.g1_inv)
+	m.mts_key_gen()
 
+	return m
+}
+
+func (m *MTS) mts_key_gen() {
 	// build polynomial
 	spoly := make(poly.Polynomial, m.n)
 	for i := 0; i < m.n; i++ {
@@ -70,47 +84,57 @@ func (m *MTS) mts_key_gen() {
 	}
 
 	var (
-		alpha     fr.Element
-		gk        bls.G2Jac
-		alpha_int big.Int
-		vk        bls.G1Jac
-		vk_aff    bls.G1Affine
-		zero      fr.Element
+		vk     bls.G1Jac
+		vk_aff bls.G1Affine
+		zero   fr.Element
 	)
-	com_keys := make([]fr.Element, m.n)
-	coms := make([]bls.G1Affine, m.n)
-	coms_k := make([]bls.G1Affine, m.n)
-	zero.SetZero()
 
+	gks := make([]bls.G2Jac, m.n)
+	coms := make([]bls.G1Affine, m.n)
+	coms_jac := make([]bls.G1Jac, m.n)
+	coms_ks := make([][]bls.G1Affine, m.n)
+
+	zero.SetZero()
 	sk := spoly.Eval(&zero)
 	vk.ScalarMultiplication(&m.g1, sk.ToBigInt(big.NewInt(0)))
 	vk_aff.FromJacobian(&vk)
 
-	alpha.SetRandom()
-	alpha.ToBigInt(&alpha_int)
-	gk.ScalarMultiplication(&m.g2, &alpha_int)
+	var (
+		idx     fr.Element
+		com_key fr.Element
+	)
+	for i := 1; i <= m.n; i++ {
+		idx = fr.NewElement(uint64(i))
+		idx.Sub(&zero, &idx)
+		com_key = spoly.Eval(&idx)
+		coms_jac[i-1].ScalarMultiplication(&m.g1, com_key.ToBigInt(big.NewInt(0)))
+		coms[i-1].FromJacobian(&coms_jac[i-1])
+	}
 
 	var (
-		coms_i   bls.G1Jac
-		coms_k_i bls.G1Jac
+		alpha     fr.Element
+		alpha_int big.Int
+		coms_k_i  bls.G1Jac
 	)
+	for i := 0; i < m.n; i++ {
+		alpha.SetRandom()
+		alpha.ToBigInt(&alpha_int)
+		gks[i].ScalarMultiplication(&m.g2, &alpha_int)
 
-	for i := 1; i <= m.n; i++ {
-		idx := fr.NewElement(uint64(i))
-		idx.Sub(&zero, &idx)
-		com_keys[i-1] = spoly.Eval(&idx)
-		coms_i.ScalarMultiplication(&m.g1, com_keys[i-1].ToBigInt(big.NewInt(0)))
-		coms_k_i.ScalarMultiplication(&coms_i, &alpha_int)
-		coms[i-1].FromJacobian(&coms_i)
-		coms_k[i-1].FromJacobian(&coms_k_i)
+		coms_ks[i] = make([]bls.G1Affine, m.n-i)
+
+		for ii := 0; ii < m.n-i; ii++ {
+			coms_k_i.ScalarMultiplication(&coms_jac[ii], &alpha_int)
+			coms_ks[i][ii].FromJacobian(&coms_k_i)
+		}
 	}
 
 	m.crs = MTSPublicParams{
 		coms:        coms,
-		coms_k:      coms_k,
+		coms_ks:     coms_ks,
 		secret_keys: skeys,
 		public_keys: vkeys,
-		gk:          gk,
+		gks:         gks,
 		vk:          vk,
 		vk_aff:      vk_aff,
 		sk:          sk,
@@ -177,7 +201,7 @@ func (m *MTS) mts_combine(sigmas []Sig) MTSSig {
 
 	mpriv.MultiExp(sigs, lags[:t], ecc.MultiExpConfig{ScalarsMont: true})
 	gpub.MultiExp(m.crs.coms[:(m.n-t)], lags[t:], ecc.MultiExpConfig{ScalarsMont: true})
-	gpubk.MultiExp(m.crs.coms_k[:(m.n-t)], lags[t:], ecc.MultiExpConfig{ScalarsMont: true})
+	gpubk.MultiExp(m.crs.coms_ks[t][:(m.n-t)], lags[t:], ecc.MultiExpConfig{ScalarsMont: true})
 
 	return MTSSig{
 		gpub:  gpub,
@@ -210,7 +234,7 @@ func (m *MTS) mts_gverify(msg_aff bls.G2Affine, sig MTSSig, t int) bool {
 	}
 
 	var g_alpha_aff bls.G2Affine
-	g_alpha_aff.FromJacobian(&(m.crs.gk))
+	g_alpha_aff.FromJacobian(&(m.crs.gks[t]))
 
 	d, _ := bls.Pair([]bls.G1Affine{gpubk_aff}, []bls.G2Affine{m.g2_aff})
 	e, _ := bls.Pair([]bls.G1Affine{gpub_aff}, []bls.G2Affine{g_alpha_aff})

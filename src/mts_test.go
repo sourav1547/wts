@@ -45,14 +45,7 @@ func TestMTSPSign(t *testing.T) {
 func TestLag(t *testing.T) {
 	n := 4
 	idxs := make([]fr.Element, 4)
-	g1, g2, _, _ := bls.Generators()
-
-	m := MTS{
-		n:  n,
-		g1: g1,
-		g2: g2,
-	}
-	m.mts_key_gen()
+	m := NewMTS(n)
 
 	for i := 0; i < n; i++ {
 		idxs[i].SetInt64(int64(i + 1))
@@ -71,18 +64,9 @@ func TestLag(t *testing.T) {
 }
 
 func TestMTSCombine(t *testing.T) {
-	g1, g2, g1_aff, g2_aff := bls.Generators()
 	n := 4
-	ths := n - 1
-
-	m := MTS{
-		n:      n,
-		g1:     g1,
-		g1_aff: g1_aff,
-		g2:     g2,
-		g2_aff: g2_aff,
-	}
-	m.mts_key_gen()
+	ths := n - 2
+	m := NewMTS(n)
 	parties := make([]MTSParty, n)
 	var pk_aff bls.G1Affine
 	signs := make([]Sig, n)
