@@ -13,7 +13,7 @@ import (
 type MTSPublicParams struct {
 	coms        []bls.G1Affine   // g^{p(-1)},...,g^{p(-n)}
 	coms_ks     [][]bls.G1Affine // g^{p(-1)k},...,g^{p(-n)k}
-	secret_keys []fr.Element     // signing keys of signers
+	secret_keys []big.Int        // signing keys of signers
 	public_keys []bls.G1Jac      // verification keys of signers
 	gks         []bls.G2Jac      // g2^k
 	vk          bls.G1Jac        // g^{p(0)}
@@ -22,8 +22,7 @@ type MTSPublicParams struct {
 }
 
 type MTSParty struct {
-	crs        []bls.G1Jac // not sure what is this for
-	seckey     *big.Int
+	seckey     big.Int
 	pubkey     bls.G1Jac
 	pubkey_aff bls.G1Affine
 }
@@ -75,12 +74,13 @@ func (m *MTS) mts_key_gen() {
 		spoly[i].SetRandom()
 	}
 
-	skeys := make([]fr.Element, m.n)
+	skeys := make([]big.Int, m.n)
 	vkeys := make([]bls.G1Jac, m.n)
 	for i := 0; i < m.n; i++ {
 		idx := fr.NewElement(uint64(i + 1))
-		skeys[i] = spoly.Eval(&idx)
-		vkeys[i].ScalarMultiplication(&m.g1, skeys[i].ToBigInt(big.NewInt(0)))
+		temp := spoly.Eval(&idx)
+		temp.ToBigInt(&skeys[i])
+		vkeys[i].ScalarMultiplication(&m.g1, &skeys[i])
 	}
 
 	var (
@@ -156,7 +156,7 @@ func (m *MTS) mts_psign(msg Message, signer MTSParty) bls.G2Jac {
 		return bls.G2Jac{}
 	}
 
-	sigma.ScalarMultiplication(&ro_msg_jac, signer.seckey)
+	sigma.ScalarMultiplication(&ro_msg_jac, &signer.seckey)
 	return sigma
 }
 

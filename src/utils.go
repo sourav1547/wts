@@ -4,6 +4,28 @@ import (
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
 )
 
+// Returns the Hamming weight of an integer
+func ham_weight(a int) int {
+	wt := 0
+	for a > 0 {
+		wt = wt + a&1
+		a = a >> 1
+	}
+	return wt
+}
+
+// Returns the positions of 1's in the binary encoding in ascending order
+func bin_pos(a int) []int {
+	var pos []int
+	for i := 0; a > 0; i++ {
+		if a&1 == 1 {
+			pos = append(pos, i)
+		}
+		a = a >> 1
+	}
+	return pos
+}
+
 // This function returns the lagrange coefficients for a given set of indices when evaluated at a specific point
 // TODO: Have to optimize this
 func get_lag_at(at int, indices []fr.Element) []fr.Element {

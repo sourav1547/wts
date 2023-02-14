@@ -23,8 +23,7 @@ func TestMTSPSign(t *testing.T) {
 	pk.ScalarMultiplication(&g1, sk.ToBigInt(big.NewInt(0)))
 
 	signer := MTSParty{
-		crs:        make([]bls.G1Jac, 1),
-		seckey:     sk.ToBigInt(big.NewInt(0)),
+		seckey:     *sk.ToBigInt(big.NewInt(0)),
 		pubkey:     pk,
 		pubkey_aff: *pk_aff.FromJacobian(&pk),
 	}
@@ -54,8 +53,8 @@ func TestLag(t *testing.T) {
 	res := get_lag_at(0, idxs)
 	var sk fr.Element
 	for i := 0; i < n; i++ {
-		var prod fr.Element
-		prod.Mul(&res[i], &m.crs.secret_keys[i])
+		var temp_sk, prod fr.Element
+		prod.Mul(&res[i], temp_sk.SetBigInt(&m.crs.secret_keys[i]))
 		sk.Add(&sk, &prod)
 	}
 	var ppk bls.G1Jac
@@ -79,7 +78,7 @@ func TestMTSCombine(t *testing.T) {
 
 	for i := 0; i < n; i++ {
 		parties[i] = MTSParty{
-			seckey:     m.crs.secret_keys[i].ToBigInt(big.NewInt(0)),
+			seckey:     m.crs.secret_keys[i],
 			pubkey:     m.crs.public_keys[i],
 			pubkey_aff: *pk_aff.FromJacobian(&m.crs.public_keys[i]),
 		}
