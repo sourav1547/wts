@@ -5,7 +5,7 @@ import (
 )
 
 // Returns the Hamming weight of an integer
-func ham_weight(a int) int {
+func HamWeight(a int) int {
 	wt := 0
 	for a > 0 {
 		wt = wt + a&1
@@ -15,7 +15,7 @@ func ham_weight(a int) int {
 }
 
 // Returns the positions of 1's in the binary encoding in ascending order
-func bin_pos(a int) []int {
+func BinPos(a int) []int {
 	var pos []int
 	for i := 0; a > 0; i++ {
 		if a&1 == 1 {
@@ -28,7 +28,7 @@ func bin_pos(a int) []int {
 
 // This function returns the lagrange coefficients for a given set of indices when evaluated at a specific point
 // TODO: Have to optimize this
-func get_lag_at(at int, indices []fr.Element) []fr.Element {
+func GetLagAt(at int, indices []fr.Element) []fr.Element {
 	n := len(indices)
 	results := make([]fr.Element, n)
 
