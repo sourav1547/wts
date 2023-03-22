@@ -3,20 +3,21 @@ module github.com/sourav1547/wts
 go 1.19
 
 require (
-	github.com/consensys/gnark v0.7.1
+	github.com/Workiva/go-datastructures v1.0.53
 	github.com/consensys/gnark-crypto v0.7.0
-	github.com/stretchr/testify v1.7.1
+	github.com/stretchr/testify v1.8.1
+	go.dedis.ch/kyber/v3 v3.1.0
+	golang.org/x/crypto v0.1.0
+	golang.org/x/exp v0.0.0-20230315142452-642cacee5cc0
 )
 
 require (
-	github.com/Workiva/go-datastructures v1.0.53 // indirect
 	github.com/davecgh/go-spew v1.1.1 // indirect
-	github.com/fxamacker/cbor/v2 v2.2.0 // indirect
+	github.com/kr/pretty v0.3.0 // indirect
 	github.com/mmcloughlin/addchain v0.4.0 // indirect
 	github.com/pmezard/go-difflib v1.0.0 // indirect
-	github.com/rs/zerolog v1.26.1 // indirect
-	github.com/x448/float16 v0.8.4 // indirect
-	golang.org/x/crypto v0.0.0-20220321153916-2c7772ba3064 // indirect
-	golang.org/x/sys v0.0.0-20220319134239-a9b59b0215f8 // indirect
-	gopkg.in/yaml.v3 v3.0.0-20210107192922-496545a6307b // indirect
+	go.dedis.ch/fixbuf v1.0.3 // indirect
+	golang.org/x/sys v0.1.0 // indirect
+	gopkg.in/check.v1 v1.0.0-20201130134442-10cb98267c6c // indirect
+	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
