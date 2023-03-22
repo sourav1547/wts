@@ -2,155 +2,356 @@ package wts
 
 import (
 	"fmt"
-	"math"
+	"math/big"
 
+	"github.com/consensys/gnark-crypto/ecc"
 	bls "github.com/consensys/gnark-crypto/ecc/bls12-381"
+	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
 )
 
-type WTSParty struct {
-	weight int
-	ell    int
-	hw     int              // Hamming weight of the signer
-	mtsp   map[int]MTSParty // TODO: Nnot sure why we need a map her.
-	idxs   []int            // Stores the index in each MTS
+type Party struct {
+	weight  int
+	sKey    big.Int
+	pKey    bls.G1Jac
+	pKeyAff bls.G1Affine
 }
 
-type WTSSig struct {
-	sigma  []MTSSig
-	weight int
+type IPAProof struct {
+	qTau  bls.G1Affine
+	rTau  bls.G1Affine
+	qrTau bls.G1Affine
+}
+
+type Sig struct {
+	bTau   bls.G2Affine // Commitment to the bitvector
+	ths    int          // Threshold
+	pi     []IPAProof   // IPA proofs
+	aggPk  bls.G1Affine // Aggregated public key
+	aggSig bls.G2Jac    // Aggregated signature
+}
+
+type CRS struct {
+	// Generators
+	g1       bls.G1Jac
+	g2       bls.G2Jac
+	g1a      bls.G1Affine
+	g2a      bls.G2Affine
+	g1InvAff bls.G1Affine
+	// Lagrange polynomials
+	tau       fr.Element // FIXME: To remove, only added for testing purposes
+	H         []fr.Element
+	L         []fr.Element
+	g2Tau     bls.G2Affine
+	vHTau     bls.G2Affine
+	lagHTaus  []bls.G1Affine // [Lag_i(tau)]
+	lag2HTaus []bls.G2Affine // [g2^Lag_i(tau)]
+	lagLTaus  []bls.G1Affine // [Lag_l(tau)]
+	gAlpha    bls.G1Affine   // h_alpha
+}
+
+type Params struct {
+	pComm bls.G1Affine     // com(g^s_i)
+	pKeys []bls.G1Affine   // [g^s_i]
+	qTaus []bls.G1Affine   // [h^{s_i.q_i(tau)}]
+	hTaus []bls.G1Affine   // [h^{s_i.Lag_i(tau)}]
+	lTaus [][]bls.G1Affine // [h^{s_i.Lag_l(tau)}]
+	aTaus []bls.G1Affine   // [h_alpha^{s_i}]
 }
 
 type WTS struct {
-	mts     []MTS // List of MTS instances
-	wmax    int   // Maximum allowable weight per signer
-	ell     int   // Number of denomination
-	weights []int // Weight distribution
-	n       int   // Total number of signers
-	ths     int   // Signing threshold
+	weights []int   // Weight distribution
+	n       int     // Total number of signers
+	signers []Party // List of signers
+	crs     CRS     // CRS for the protocol
+	pp      Params  // The parameters for the signatures
 }
 
-func NewWTS(n, ths, ell int, weights []int) (WTS, []WTSParty) {
+func GenCRS(n int) CRS {
+	omH := GetOmega(n, 0)
+	var (
+		g1InvAff bls.G1Affine
+		tau      fr.Element
+		g2Tau    bls.G2Affine
+	)
+
+	g1, g2, g1a, g2a := bls.Generators()
+	g1InvAff.ScalarMultiplication(&g1a, big.NewInt(int64(-1)))
+
+	tau.SetRandom()
+	g2Tau.ScalarMultiplication(&g2a, tau.ToBigInt(&big.Int{}))
+
+	// Computing H and L
+	H := make([]fr.Element, n)
+	for i := 0; i < n; i++ {
+		H[i].Exp(omH, big.NewInt(int64(i)))
+	}
+
+	// FIXME: This is probably not correct
+	// Currently L:{2,3,...,n+1}
+	L := make([]fr.Element, n-1)
+	for i := 0; i < n-1; i++ {
+		L[i] = fr.NewElement(uint64(i + 2))
+	}
+
+	// Computing vHTau
+	var vHTau bls.G2Affine
+	var tauN fr.Element
+	tauN.Exp(tau, big.NewInt(int64(n)))
+	one := fr.One()
+	tauN.Sub(&tauN, &one)
+	vHTau.ScalarMultiplication(&g2a, tauN.ToBigInt(&big.Int{}))
+
+	// Computing Lagrange in the exponent
+	lagH := GetLagAt(tau, H)
+	lagL := GetLagAt(tau, L)
+	lagHTaus := bls.BatchScalarMultiplicationG1(&g1a, lagH)
+	lag2HTaus := bls.BatchScalarMultiplicationG2(&g2a, lagH)
+	lagLTaus := bls.BatchScalarMultiplicationG1(&g1a, lagL)
+
+	// Computing g^alpha
+	var (
+		alpha  fr.Element
+		div    fr.Element
+		gAlpha bls.G1Affine
+	)
+	for i := 0; i < n; i++ {
+		alpha.Add(&alpha, div.Div(&lagH[i], &H[i]))
+	}
+	gAlpha.ScalarMultiplication(&g1a, alpha.ToBigInt(&big.Int{}))
+
+	return CRS{
+		g1:        g1,
+		g2:        g2,
+		g1a:       g1a,
+		g2a:       g2a,
+		g1InvAff:  g1InvAff,
+		H:         H,
+		L:         L,
+		tau:       tau,
+		g2Tau:     g2Tau,
+		vHTau:     vHTau,
+		lagHTaus:  lagHTaus,
+		lag2HTaus: lag2HTaus,
+		lagLTaus:  lagLTaus,
+		gAlpha:    gAlpha,
+	}
+}
+
+func NewWTS(n, ths int, weights []int, crs CRS) WTS {
 	w := WTS{
-		wmax:    int(math.Pow(2, float64(ell))),
 		n:       n,
-		ths:     ths,
-		ell:     ell,
 		weights: weights,
+		crs:     crs,
 	}
-	parties := w.wts_key_gen()
-	return w, parties
+	w.keyGen()
+	w.preProcess()
+	return w
 }
 
-func (w *WTS) wts_key_gen() []WTSParty {
-	parties := make([]WTSParty, w.n)
-	w.mts = make([]MTS, w.ell)
+func (w *WTS) keyGen() {
+	parties := make([]Party, w.n)
+	pKeys := make([]bls.G1Affine, w.n)
+	sKeys := make([]fr.Element, w.n)
 
-	// calculating signers in each denominations
-	nks := make([]int, w.ell)
+	var (
+		sk  fr.Element
+		pk  bls.G1Jac
+		pka bls.G1Affine
+	)
 	for i := 0; i < w.n; i++ {
-		all_pos := bin_pos(w.weights[i])
-		for _, pos := range all_pos {
-			nks[pos] = nks[pos] + 1
+		sk.SetRandom()
+		skInt := sk.ToBigInt(&big.Int{})
+		pka.ScalarMultiplication(&w.crs.g1a, skInt)
+		pk.FromAffine(&pka)
+		parties[i] = Party{
+			weight:  w.weights[i],
+			sKey:    *skInt,
+			pKey:    pk,
+			pKeyAff: pka,
 		}
+		pKeys[i] = pka
+		sKeys[i] = sk
 	}
 
-	// FIXME: Have to figure out what to do when certain nks are zero.
-	for i := 0; i < w.ell; i++ {
-		if nks[i] > 0 {
-			w.mts[i] = NewMTS(nks[i])
-		}
-	}
+	aTaus := bls.BatchScalarMultiplicationG1(&w.crs.gAlpha, sKeys)
+	hTaus := make([]bls.G1Affine, w.n)
+	lTaus := make([][]bls.G1Affine, w.n)
 
-	var pk_aff bls.G1Affine
-	cur_counts := make([]int, w.ell)
+	var pComm bls.G1Affine
 	for i := 0; i < w.n; i++ {
-		weight := w.weights[i]
-		hw := ham_weight(weight)
-		all_pos := bin_pos(weight)
+		hTaus[i].ScalarMultiplication(&w.crs.lagHTaus[i], &parties[i].sKey)
+		pComm.Add(&pComm, &hTaus[i])
 
-		// For each signer, creating one MTS signer for every denomination
-		mtsp := make(map[int]MTSParty, hw)
-		idxs := make([]int, hw)
-		for ii, pos := range all_pos {
-			idx := cur_counts[pos]
-			mtsp[pos] = MTSParty{
-				seckey:     w.mts[pos].crs.secret_keys[idx],
-				pubkey:     w.mts[pos].crs.public_keys[idx],
-				pubkey_aff: *pk_aff.FromJacobian(&w.mts[pos].crs.public_keys[idx]),
-			}
-			idxs[ii] = idx
-			cur_counts[pos] += 1
-		}
-
-		parties[i] = WTSParty{
-			weight: weight,
-			ell:    w.ell,
-			hw:     hw,
-			mtsp:   mtsp,
-			idxs:   idxs,
+		lTaus[i] = make([]bls.G1Affine, w.n-1)
+		for ii := 0; ii < w.n-1; ii++ {
+			lTaus[i][ii].ScalarMultiplication(&w.crs.lagLTaus[ii], &parties[i].sKey)
 		}
 	}
 
-	return parties
+	w.pp = Params{
+		pKeys: pKeys,
+		pComm: pComm,
+		hTaus: hTaus,
+		lTaus: lTaus,
+		aTaus: aTaus,
+	}
+	w.signers = parties
+}
+
+// Compute
+func (w *WTS) preProcess() {
+	lagLH := make(map[int][]fr.Element)
+	lagLL := make(map[int][]fr.Element)
+	zHL := make([]fr.Element, w.n-1)
+
+	for i := 0; i < w.n-1; i++ {
+		lagLH[i] = GetLagAt(w.crs.L[i], w.crs.H)
+		lagLL[i] = GetLagAt(w.crs.L[i], w.crs.L)
+
+		prod := fr.One()
+		var diff fr.Element
+		for ii := 0; ii < w.n; ii++ {
+			diff.Sub(&w.crs.L[i], &w.crs.H[ii])
+			prod.Mul(&prod, &diff)
+		}
+		zHL[i] = prod
+	}
+
+	lagLs := make([]bls.G1Affine, w.n-1)
+	for l := 0; l < w.n-1; l++ {
+		bases := make([]bls.G1Affine, w.n-1)
+		for i := 0; i < w.n-1; i++ {
+			bases[i] = w.pp.lTaus[i][l]
+		}
+		exps := GetLagAt(w.crs.L[l], w.crs.L)
+		lagLs[l].MultiExp(bases, exps, ecc.MultiExpConfig{ScalarsMont: true})
+	}
+
+	qTaus := make([]bls.G1Affine, w.n)
+	for k := 0; k < w.n; k++ {
+		bases := make([]bls.G1Affine, w.n-1)
+		exps := make([]fr.Element, w.n-1)
+
+		for l := 0; l < w.n-1; l++ {
+			bases[l].Sub(&lagLs[l], &w.pp.lTaus[k][l])
+			exps[l].Div(&lagLH[l][k], &zHL[l])
+		}
+		qTaus[k].MultiExp(bases, exps, ecc.MultiExpConfig{ScalarsMont: true})
+	}
+	w.pp.qTaus = qTaus
 }
 
 // Takes the singing party and signs the message
-// Returns a list of signatures, one for each MTS party
-func (w *WTS) wts_psign(msg Message, signer WTSParty) []bls.G2Jac {
+func (w *WTS) psign(msg Message, signer Party) bls.G2Jac {
 	var (
-		dst        []byte
-		ro_msg_jac bls.G2Jac
+		dst      []byte
+		sigma    bls.G2Jac
+		roMsgJac bls.G2Jac
 	)
-	ro_msg, err := bls.HashToCurveG2SSWU(msg, dst)
-	ro_msg_jac.FromAffine(&ro_msg)
+	roMsg, _ := bls.HashToCurveG2SSWU(msg, dst)
+	roMsgJac.FromAffine(&roMsg)
 
-	if err != nil {
-		fmt.Printf("Signature error!")
-		return []bls.G2Jac{}
-	}
-
-	sigmas := make([]bls.G2Jac, signer.hw)
-	for i := 0; i < signer.hw; i++ {
-		idx := signer.idxs[i]
-		sk := signer.mtsp[idx].seckey
-		sigmas[i].ScalarMultiplication(&ro_msg_jac, &sk)
-	}
-
-	return sigmas
+	sigma.ScalarMultiplication(&roMsgJac, &signer.sKey)
+	return sigma
 }
 
 // Takes the signing key and signs the message
-func (w *WTS) wts_pverify(msg bls.G2Affine, sigmas []bls.G2Jac, signer WTSParty) bool {
-	var sigma_aff bls.G2Affine
-	g1_inv_aff := w.mts[0].g1_inv_aff
+func (w *WTS) pverify(roMsg bls.G2Affine, sigma bls.G2Jac, vk bls.G1Affine) bool {
+	var sigmaAff bls.G2Affine
+	sigmaAff.FromJacobian(&sigma)
 
-	for i := 0; i < signer.hw; i++ {
-		sigma_aff.FromJacobian(&sigmas[i])
-		idx := signer.idxs[i]
+	P := []bls.G1Affine{vk, w.crs.g1InvAff}
+	Q := []bls.G2Affine{roMsg, sigmaAff}
 
-		P := []bls.G1Affine{signer.mtsp[idx].pubkey_aff, g1_inv_aff}
-		Q := []bls.G2Affine{msg, sigma_aff}
-
-		res, err := bls.PairingCheck(P, Q)
-		if err != nil {
-			fmt.Println("Panic mts verification failed")
-		}
-		if !res {
-			return false
-		}
+	res, err := bls.PairingCheck(P, Q)
+	if err != nil {
+		fmt.Println("Panic mts verification failed")
 	}
-	return true
+	return res
 }
 
 // The combine function
-func (w *WTS) wts_combine(sigmas []MTSSig) WTSSig {
-	return WTSSig{}
+func (w *WTS) combine(signers []int, sigmas []bls.G2Jac) Sig {
+	var (
+		bTau  bls.G2Affine
+		qTau  bls.G1Affine
+		rTau  bls.G1Affine
+		aggPk bls.G1Affine
+	)
+	weight := 0
+	for _, idx := range signers {
+		bTau.Add(&bTau, &w.crs.lag2HTaus[idx])
+		qTau.Add(&qTau, &w.pp.qTaus[idx])
+		rTau.Add(&rTau, &w.pp.hTaus[idx])
+		aggPk.Add(&aggPk, &w.pp.pKeys[idx])
+		weight += w.weights[idx]
+	}
+
+	lhs, _ := bls.Pair([]bls.G1Affine{w.pp.pComm}, []bls.G2Affine{bTau})
+	rhs, _ := bls.Pair([]bls.G1Affine{qTau, rTau}, []bls.G2Affine{w.crs.vHTau, w.crs.g2a})
+
+	if lhs.Equal(&rhs) {
+		fmt.Println("First equation matches!")
+	}
+
+	// Compute qrTau and checking its correctness
+	var (
+		qrTau1 bls.G1Affine
+		qrTau2 bls.G1Affine
+		qrTau  bls.G1Affine
+	)
+
+	// Computing the second term
+	lagH0 := GetLagAt(fr.NewElement(uint64(0)), w.crs.H)
+	var temp bls.G1Affine
+	for _, idx := range signers {
+		temp.ScalarMultiplication(&w.pp.aTaus[idx], lagH0[idx].ToBigInt(&big.Int{}))
+		qrTau2.Add(&qrTau2, &temp)
+	}
+
+	// Computing the first term
+	var omHIInv fr.Element
+	for _, idx := range signers {
+		omHIInv.Inverse(&w.crs.H[idx])
+		temp.ScalarMultiplication(&w.pp.hTaus[idx], omHIInv.ToBigInt(&big.Int{}))
+		qrTau1.Add(&qrTau1, &temp)
+	}
+	qrTau.Sub(&qrTau1, &qrTau2)
+
+	var aggPkN bls.G1Affine
+	nF := fr.NewElement(uint64(w.n))
+	nF.Inverse(&nF)
+	aggPkN.ScalarMultiplication(&aggPk, nF.ToBigInt(&big.Int{}))
+
+	lhs, _ = bls.Pair([]bls.G1Affine{rTau}, []bls.G2Affine{w.crs.g2a})
+	rhs, _ = bls.Pair([]bls.G1Affine{qrTau, aggPkN}, []bls.G2Affine{w.crs.g2Tau, w.crs.g2a})
+
+	if lhs.Equal(&rhs) {
+		fmt.Println("Second equation matches!")
+	}
+
+	// Aggregating the signature
+	var aggSig bls.G2Jac
+	for _, sig := range sigmas {
+		aggSig.AddAssign(&sig)
+	}
+
+	pf1 := IPAProof{
+		qTau:  qTau,
+		rTau:  rTau,
+		qrTau: qrTau,
+	}
+
+	return Sig{
+		pi:     []IPAProof{pf1},
+		ths:    weight,
+		bTau:   bTau,
+		aggSig: aggSig,
+		aggPk:  aggPk,
+	}
 }
 
 // WTS global verify
-// TODO: I think it might be better to make a class here
-func (w *WTS) wts_gverify(msg Message, sigma WTSSig, weight int) bool {
+func (w *WTS) gverify(msg Message, sigma Sig, ths int) bool {
 	return true
 }
-
-// Only missing piece is the
