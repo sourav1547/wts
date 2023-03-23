@@ -10,7 +10,7 @@ import (
 func TestMultSigWTS(t *testing.T) {
 	var dst []byte
 	msg := []byte("hello world")
-	ro_msg, _ := bls.HashToCurveG2SSWU(msg, dst)
+	ro_msg, _ := bls.HashToG2(msg, dst)
 
 	n := 1 << 12
 	ths := 1 << 4

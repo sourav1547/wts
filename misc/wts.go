@@ -103,7 +103,7 @@ func (w *WTS) wts_psign(msg Message, signer WTSParty) []bls.G2Jac {
 		dst        []byte
 		ro_msg_jac bls.G2Jac
 	)
-	ro_msg, err := bls.HashToCurveG2SSWU(msg, dst)
+	ro_msg, err := bls.HashToG2(msg, dst)
 	ro_msg_jac.FromAffine(&ro_msg)
 
 	if err != nil {

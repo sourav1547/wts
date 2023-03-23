@@ -20,10 +20,10 @@ func TestMTSPSign(t *testing.T) {
 	)
 
 	sk.SetRandom()
-	pk.ScalarMultiplication(&g1, sk.ToBigInt(big.NewInt(0)))
+	pk.ScalarMultiplication(&g1, sk.BigInt(big.NewInt(0)))
 
 	signer := MTSParty{
-		seckey:     *sk.ToBigInt(big.NewInt(0)),
+		seckey:     *sk.BigInt(big.NewInt(0)),
 		pubkey:     pk,
 		pubkey_aff: *pk_aff.FromJacobian(&pk),
 	}
@@ -37,7 +37,7 @@ func TestMTSPSign(t *testing.T) {
 	}
 	sigma := m.mts_psign(msg, signer)
 	var dst []byte
-	ro_msg, _ := bls.HashToCurveG2SSWU(msg, dst)
+	ro_msg, _ := bls.HashToG2(msg, dst)
 	assert.Equal(t, m.mts_pverify(ro_msg, sigma, pk_aff), true)
 }
 
@@ -58,7 +58,7 @@ func TestLag(t *testing.T) {
 		sk.Add(&sk, &prod)
 	}
 	var ppk bls.G1Jac
-	ppk.ScalarMultiplication(&m.g1, sk.ToBigInt(big.NewInt(0)))
+	ppk.ScalarMultiplication(&m.g1, sk.BigInt(big.NewInt(0)))
 	assert.Equal(t, ppk, m.crs.vk)
 }
 
@@ -72,7 +72,7 @@ func TestMTSCombine(t *testing.T) {
 
 	msg := []byte("hello world")
 	var dst []byte
-	ro_msg, _ := bls.HashToCurveG2SSWU(msg, dst)
+	ro_msg, _ := bls.HashToG2(msg, dst)
 	var ro_msg_jac bls.G2Jac
 	ro_msg_jac.FromAffine(&ro_msg)
 

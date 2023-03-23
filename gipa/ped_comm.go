@@ -26,7 +26,7 @@ func NewPed(n int) Ped {
 	for i := 0; i < n; i++ {
 		// To double check this, this might throw an error
 		binary.LittleEndian.PutUint32(src, uint32(i))
-		keys[i], _ = bls.HashToCurveG1SSWU(src, dest)
+		keys[i], _ = bls.HashToG1(src, dest)
 	}
 
 	return Ped{
@@ -37,7 +37,7 @@ func NewPed(n int) Ped {
 
 func (a *Ped) commit(vec []fr.Element) bls.G1Jac {
 	var comm bls.G1Jac
-	res, err := comm.MultiExp(a.keys, vec, ecc.MultiExpConfig{ScalarsMont: true})
+	res, err := comm.MultiExp(a.keys, vec, ecc.MultiExpConfig{})
 	if err != nil {
 		fmt.Println("Error computing ped commitment g1")
 		return bls.G1Jac{}

@@ -357,5 +357,14 @@ func (w *WTS) combine(signers []int, sigmas []bls.G2Jac) Sig {
 
 // WTS global verify
 func (w *WTS) gverify(msg Message, sigma Sig, ths int) bool {
-	return true
+	var sigAff bls.G2Affine
+
+	roMsg, _ := bls.HashToG2(msg, []byte{})
+	sigAff.FromJacobian(&sigma.aggSig)
+
+	P := []bls.G1Affine{sigma.aggPk, w.crs.g1InvAff}
+	Q := []bls.G2Affine{roMsg, sigAff}
+
+	res, _ := bls.PairingCheck(P, Q)
+	return res
 }

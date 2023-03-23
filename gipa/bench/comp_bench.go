@@ -40,7 +40,7 @@ func sourceCost(logn int, bases [][]bls.G1Affine) []bls.G1Jac {
 	for i := 0; i < logn; i++ {
 		monomials(i-1, chals[i], scalars)
 		count = count * 3
-		resps[i].MultiExp(bases[i], scalars[:count], ecc.MultiExpConfig{ScalarsMont: true})
+		resps[i].MultiExp(bases[i], scalars[:count], ecc.MultiExpConfig{})
 	}
 	return resps
 }

@@ -79,7 +79,7 @@ func (m *MultSig) key_gen() {
 	// Sampling random keys for each signer and computing the corresponding public key
 	for i := 0; i < m.n; i++ {
 		sk.SetRandom()
-		sk.ToBigInt(&skeys[i])
+		sk.BigInt(&skeys[i])
 		vk.ScalarMultiplication(&m.g1, &skeys[i])
 		vk_aff.FromJacobian(&vk)
 
@@ -108,7 +108,7 @@ func (m *MultSig) psign(msg wts.Message, signer MultSigParty) Sig {
 		sigma      bls.G2Jac
 		ro_msg_jac bls.G2Jac
 	)
-	ro_msg, err := bls.HashToCurveG2SSWU(msg, dst)
+	ro_msg, err := bls.HashToG2(msg, dst)
 	ro_msg_jac.FromAffine(&ro_msg)
 
 	if err != nil {

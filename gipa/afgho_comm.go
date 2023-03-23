@@ -26,8 +26,8 @@ func NewAFGHO(n int) AFGHO {
 	for i := 0; i < n; i++ {
 		// To double check this, this might throw an error
 		binary.LittleEndian.PutUint32(src, uint32(i))
-		key_g1[i], _ = bls.HashToCurveG2SSWU(src, dest)
-		key_g2[i], _ = bls.HashToCurveG1SSWU(src, dest)
+		key_g1[i], _ = bls.HashToG2(src, dest)
+		key_g2[i], _ = bls.HashToG1(src, dest)
 	}
 
 	return AFGHO{
