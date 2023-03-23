@@ -11,7 +11,7 @@ import (
 
 type Party struct {
 	weight  int
-	sKey    big.Int
+	sKey    fr.Element
 	pKey    bls.G1Jac
 	pKeyAff bls.G1Affine
 }
@@ -78,7 +78,7 @@ func GenCRS(n int) CRS {
 	g1InvAff.ScalarMultiplication(&g1a, big.NewInt(int64(-1)))
 
 	tau.SetRandom()
-	g2Tau.ScalarMultiplication(&g2a, tau.ToBigInt(&big.Int{}))
+	g2Tau.ScalarMultiplication(&g2a, tau.BigInt(&big.Int{}))
 
 	// Computing H and L
 	H := make([]fr.Element, n)
@@ -93,13 +93,22 @@ func GenCRS(n int) CRS {
 		L[i] = fr.NewElement(uint64(i + 2))
 	}
 
+	// TODO: To remove this check after fixing the above issue
+	for _, h := range H {
+		for _, l := range L {
+			if h.Equal(&l) {
+				fmt.Println("L and H are not disjoint! PANIC")
+			}
+		}
+	}
+
 	// Computing vHTau
 	var vHTau bls.G2Affine
 	var tauN fr.Element
 	tauN.Exp(tau, big.NewInt(int64(n)))
 	one := fr.One()
 	tauN.Sub(&tauN, &one)
-	vHTau.ScalarMultiplication(&g2a, tauN.ToBigInt(&big.Int{}))
+	vHTau.ScalarMultiplication(&g2a, tauN.BigInt(&big.Int{}))
 
 	// Computing Lagrange in the exponent
 	lagH := GetLagAt(tau, H)
@@ -117,7 +126,7 @@ func GenCRS(n int) CRS {
 	for i := 0; i < n; i++ {
 		alpha.Add(&alpha, div.Div(&lagH[i], &H[i]))
 	}
-	gAlpha.ScalarMultiplication(&g1a, alpha.ToBigInt(&big.Int{}))
+	gAlpha.ScalarMultiplication(&g1a, alpha.BigInt(&big.Int{}))
 
 	return CRS{
 		g1:        g1,
@@ -160,17 +169,18 @@ func (w *WTS) keyGen() {
 	)
 	for i := 0; i < w.n; i++ {
 		sk.SetRandom()
-		skInt := sk.ToBigInt(&big.Int{})
-		pka.ScalarMultiplication(&w.crs.g1a, skInt)
+		pka.ScalarMultiplication(&w.crs.g1a, sk.BigInt(&big.Int{}))
 		pk.FromAffine(&pka)
+		pKeys[i] = pka
+		sKeys[i] = sk
+
 		parties[i] = Party{
 			weight:  w.weights[i],
-			sKey:    *skInt,
+			sKey:    sk,
 			pKey:    pk,
 			pKeyAff: pka,
 		}
-		pKeys[i] = pka
-		sKeys[i] = sk
+
 	}
 
 	aTaus := bls.BatchScalarMultiplicationG1(&w.crs.gAlpha, sKeys)
@@ -179,12 +189,12 @@ func (w *WTS) keyGen() {
 
 	var pComm bls.G1Affine
 	for i := 0; i < w.n; i++ {
-		hTaus[i].ScalarMultiplication(&w.crs.lagHTaus[i], &parties[i].sKey)
+		hTaus[i].ScalarMultiplication(&w.crs.lagHTaus[i], sKeys[i].BigInt(&big.Int{}))
 		pComm.Add(&pComm, &hTaus[i])
 
 		lTaus[i] = make([]bls.G1Affine, w.n-1)
 		for ii := 0; ii < w.n-1; ii++ {
-			lTaus[i][ii].ScalarMultiplication(&w.crs.lagLTaus[ii], &parties[i].sKey)
+			lTaus[i][ii].ScalarMultiplication(&w.crs.lagLTaus[ii], sKeys[i].BigInt(&big.Int{}))
 		}
 	}
 
@@ -200,43 +210,37 @@ func (w *WTS) keyGen() {
 
 // Compute
 func (w *WTS) preProcess() {
-	lagLH := make(map[int][]fr.Element)
-	lagLL := make(map[int][]fr.Element)
+	lagLH := make([][]fr.Element, w.n-1)
 	zHL := make([]fr.Element, w.n-1)
 
-	for i := 0; i < w.n-1; i++ {
-		lagLH[i] = GetLagAt(w.crs.L[i], w.crs.H)
-		lagLL[i] = GetLagAt(w.crs.L[i], w.crs.L)
+	for l := 0; l < w.n-1; l++ {
+		lagLH[l] = GetLagAt(w.crs.L[l], w.crs.H)
 
-		prod := fr.One()
-		var diff fr.Element
-		for ii := 0; ii < w.n; ii++ {
-			diff.Sub(&w.crs.L[i], &w.crs.H[ii])
-			prod.Mul(&prod, &diff)
-		}
-		zHL[i] = prod
+		one := fr.One()
+		zHL[l].Exp(w.crs.L[l], big.NewInt(int64(w.n)))
+		zHL[l].Sub(&zHL[l], &one)
 	}
 
 	lagLs := make([]bls.G1Affine, w.n-1)
 	for l := 0; l < w.n-1; l++ {
-		bases := make([]bls.G1Affine, w.n-1)
-		for i := 0; i < w.n-1; i++ {
+		bases := make([]bls.G1Affine, w.n)
+		for i := 0; i < w.n; i++ {
 			bases[i] = w.pp.lTaus[i][l]
 		}
-		exps := GetLagAt(w.crs.L[l], w.crs.L)
-		lagLs[l].MultiExp(bases, exps, ecc.MultiExpConfig{ScalarsMont: true})
+		lagLs[l].MultiExp(bases, lagLH[l], ecc.MultiExpConfig{})
+
 	}
 
 	qTaus := make([]bls.G1Affine, w.n)
-	for k := 0; k < w.n; k++ {
+	for i := 0; i < w.n; i++ {
 		bases := make([]bls.G1Affine, w.n-1)
 		exps := make([]fr.Element, w.n-1)
 
 		for l := 0; l < w.n-1; l++ {
-			bases[l].Sub(&lagLs[l], &w.pp.lTaus[k][l])
-			exps[l].Div(&lagLH[l][k], &zHL[l])
+			bases[l].Sub(&lagLs[l], &w.pp.lTaus[i][l])
+			exps[l].Div(&lagLH[l][i], &zHL[l])
 		}
-		qTaus[k].MultiExp(bases, exps, ecc.MultiExpConfig{ScalarsMont: true})
+		qTaus[i].MultiExp(bases, exps, ecc.MultiExpConfig{})
 	}
 	w.pp.qTaus = qTaus
 }
@@ -248,10 +252,10 @@ func (w *WTS) psign(msg Message, signer Party) bls.G2Jac {
 		sigma    bls.G2Jac
 		roMsgJac bls.G2Jac
 	)
-	roMsg, _ := bls.HashToCurveG2SSWU(msg, dst)
+	roMsg, _ := bls.HashToG2(msg, dst)
 	roMsgJac.FromAffine(&roMsg)
 
-	sigma.ScalarMultiplication(&roMsgJac, &signer.sKey)
+	sigma.ScalarMultiplication(&roMsgJac, signer.sKey.BigInt(&big.Int{}))
 	return sigma
 }
 
@@ -305,7 +309,7 @@ func (w *WTS) combine(signers []int, sigmas []bls.G2Jac) Sig {
 	lagH0 := GetLagAt(fr.NewElement(uint64(0)), w.crs.H)
 	var temp bls.G1Affine
 	for _, idx := range signers {
-		temp.ScalarMultiplication(&w.pp.aTaus[idx], lagH0[idx].ToBigInt(&big.Int{}))
+		temp.ScalarMultiplication(&w.pp.aTaus[idx], lagH0[idx].BigInt(&big.Int{}))
 		qrTau2.Add(&qrTau2, &temp)
 	}
 
@@ -313,7 +317,7 @@ func (w *WTS) combine(signers []int, sigmas []bls.G2Jac) Sig {
 	var omHIInv fr.Element
 	for _, idx := range signers {
 		omHIInv.Inverse(&w.crs.H[idx])
-		temp.ScalarMultiplication(&w.pp.hTaus[idx], omHIInv.ToBigInt(&big.Int{}))
+		temp.ScalarMultiplication(&w.pp.hTaus[idx], omHIInv.BigInt(&big.Int{}))
 		qrTau1.Add(&qrTau1, &temp)
 	}
 	qrTau.Sub(&qrTau1, &qrTau2)
@@ -321,7 +325,7 @@ func (w *WTS) combine(signers []int, sigmas []bls.G2Jac) Sig {
 	var aggPkN bls.G1Affine
 	nF := fr.NewElement(uint64(w.n))
 	nF.Inverse(&nF)
-	aggPkN.ScalarMultiplication(&aggPk, nF.ToBigInt(&big.Int{}))
+	aggPkN.ScalarMultiplication(&aggPk, nF.BigInt(&big.Int{}))
 
 	lhs, _ = bls.Pair([]bls.G1Affine{rTau}, []bls.G2Affine{w.crs.g2a})
 	rhs, _ = bls.Pair([]bls.G1Affine{qrTau, aggPkN}, []bls.G2Affine{w.crs.g2Tau, w.crs.g2a})

@@ -1,5 +1,3 @@
-// Taken from https://github.com/rsinha/mts/blob/main/snark/mts.go
-
 // Package eddsa provides a ZKP-circuit function to verify a EdDSA signature.
 package wts
 
@@ -23,7 +21,6 @@ import (
 
 // PublicKey stores an eddsa public key (to be used in gnark circuit)
 type PublicKey struct {
-	// TODO: To include a weight parameter here.
 	A twistededwards.Point
 }
 

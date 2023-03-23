@@ -24,14 +24,16 @@ import (
 	"github.com/consensys/gnark/test"
 )
 
-const NUM_NODES = 5
+const NUM_NODES = 4
 
 type mtsCircuit struct {
 	curveID      tedwards.ID
 	PublicKeys   [NUM_NODES]PublicKey `gnark:",public"`
 	Signatures   [NUM_NODES]Signature `gnark:",public"`
+	Weights      [NUM_NODES]int       `gnark:",public"`
 	Message      frontend.Variable    `gnark:",public"`
 	RootHash     frontend.Variable    `gnark:",public"`
+	threshold    int                  `gnark:",public"`
 	Path, Helper [][]frontend.Variable
 }
 
@@ -52,8 +54,6 @@ func (circuit *mtsCircuit) Define(api frontend.API) error {
 		return err
 	}
 
-	// TODO(@SD): The VerifyProofs and Verify seems to be uncorellated
-	// In the VerifyProofs we have to check that the Merkle leaves are indeed what they say they are.
 	VerifyProofs(api, merkle_hasher, circuit.RootHash, circuit.Path, circuit.Helper)
 	// verify the signature in the cs
 	return Verify(curve, circuit.Signatures, circuit.Message, circuit.PublicKeys, &eddsa_hasher)
@@ -123,7 +123,6 @@ func TestMts(t *testing.T) {
 
 	for id := 0; id < numProofs; id++ {
 		// build a merkle tree -- todo: check use of hashing here
-		// TODO(@sd): Probably we can build this Merkle tree outside this loop
 		var buf bytes.Buffer
 		for i := 0; i < NUM_NODES; i++ {
 			var leaf fr.Element
@@ -162,6 +161,7 @@ func TestMts(t *testing.T) {
 		circuit.Helper[id] = make([]frontend.Variable, len(proof)-1)
 	}
 
-	//assert.ProverSucceeded(&circuit, &witness, test.WithCurves(snarkCurve))
-	assert.SolvingSucceeded(&circuit, &witness, test.WithCurves(snarkCurve))
+	assert.ProverSucceeded(&circuit, &witness, test.WithCurves(snarkCurve))
+	// assert.ProverFailed(&circuit, &witness, test.WithCurves(snarkCurve))
+	// assert.SolvingSucceeded(&circuit, &witness, test.WithCurves(snarkCurve))
 }
