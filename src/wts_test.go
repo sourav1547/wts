@@ -9,6 +9,45 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
+func BenchmarkCompF(b *testing.B) {
+	logN := 15
+	n := 1 << logN
+
+	fs := make([]fr.Element, n*logN)
+	for i := 0; i < n*logN; i++ {
+		fs[i].SetRandom()
+	}
+
+	for i := 0; i < b.N; i++ {
+		for j := 0; j < 4; j++ {
+			var sum fr.Element
+			for ii := 0; ii < n*logN; ii++ {
+				sum.Add(&sum, &fs[ii])
+			}
+		}
+	}
+}
+
+func BenchmarkCompG1(b *testing.B) {
+	logN := 15
+	n := 1 << logN
+	g1, _, _, _ := bls.Generators()
+
+	var exp fr.Element
+	gs := make([]bls.G1Jac, n)
+	for i := 0; i < n; i++ {
+		exp.SetRandom()
+		gs[i].ScalarMultiplication(&g1, exp.BigInt(&big.Int{}))
+	}
+
+	for i := 0; i < b.N; i++ {
+		var sumG bls.G1Jac
+		for ii := 0; ii < n; ii++ {
+			sumG.AddAssign(&gs[ii])
+		}
+	}
+}
+
 func TestGetOmega(t *testing.T) {
 	n := 1 << 16
 	seed := 0

@@ -291,13 +291,6 @@ func (w *WTS) combine(signers []int, sigmas []bls.G2Jac) Sig {
 		weight += w.weights[idx]
 	}
 
-	lhs, _ := bls.Pair([]bls.G1Affine{w.pp.pComm}, []bls.G2Affine{bTau})
-	rhs, _ := bls.Pair([]bls.G1Affine{qTau, rTau}, []bls.G2Affine{w.crs.vHTau, w.crs.g2a})
-
-	if lhs.Equal(&rhs) {
-		fmt.Println("First equation matches!")
-	}
-
 	// Compute qrTau and checking its correctness
 	var (
 		qrTau1 bls.G1Affine
@@ -322,18 +315,6 @@ func (w *WTS) combine(signers []int, sigmas []bls.G2Jac) Sig {
 	}
 	qrTau.Sub(&qrTau1, &qrTau2)
 
-	var aggPkN bls.G1Affine
-	nF := fr.NewElement(uint64(w.n))
-	nF.Inverse(&nF)
-	aggPkN.ScalarMultiplication(&aggPk, nF.BigInt(&big.Int{}))
-
-	lhs, _ = bls.Pair([]bls.G1Affine{rTau}, []bls.G2Affine{w.crs.g2a})
-	rhs, _ = bls.Pair([]bls.G1Affine{qrTau, aggPkN}, []bls.G2Affine{w.crs.g2Tau, w.crs.g2a})
-
-	if lhs.Equal(&rhs) {
-		fmt.Println("Second equation matches!")
-	}
-
 	// Aggregating the signature
 	var aggSig bls.G2Jac
 	for _, sig := range sigmas {
@@ -357,8 +338,9 @@ func (w *WTS) combine(signers []int, sigmas []bls.G2Jac) Sig {
 
 // WTS global verify
 func (w *WTS) gverify(msg Message, sigma Sig, ths int) bool {
-	var sigAff bls.G2Affine
 
+	// 1. Checking aggregated signature is correct
+	var sigAff bls.G2Affine
 	roMsg, _ := bls.HashToG2(msg, []byte{})
 	sigAff.FromJacobian(&sigma.aggSig)
 
@@ -366,5 +348,24 @@ func (w *WTS) gverify(msg Message, sigma Sig, ths int) bool {
 	Q := []bls.G2Affine{roMsg, sigAff}
 
 	res, _ := bls.PairingCheck(P, Q)
+
+	// 2.1 Checking aggP, i.e., s(tau)b(tau) = q(tau)z(tau) + r(tau)
+	aggPi := sigma.pi[0]
+	lhs, _ := bls.Pair([]bls.G1Affine{w.pp.pComm}, []bls.G2Affine{sigma.bTau})
+	rhs, _ := bls.Pair([]bls.G1Affine{aggPi.qTau, aggPi.rTau}, []bls.G2Affine{w.crs.vHTau, w.crs.g2a})
+
+	res = res && lhs.Equal(&rhs)
+
+	// 2.2 Checking r(tau) = q_r(tau)tau + aggPk/n  is correct
+	var aggPkN bls.G1Affine
+	nInv := fr.NewElement(uint64(w.n))
+	nInv.Inverse(&nInv)
+	aggPkN.ScalarMultiplication(&sigma.aggPk, nInv.BigInt(&big.Int{}))
+
+	lhs, _ = bls.Pair([]bls.G1Affine{aggPi.rTau}, []bls.G2Affine{w.crs.g2a})
+	rhs, _ = bls.Pair([]bls.G1Affine{aggPi.qrTau, aggPkN}, []bls.G2Affine{w.crs.g2Tau, w.crs.g2a})
+
+	res = res && lhs.Equal(&rhs)
+
 	return res
 }
