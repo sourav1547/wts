@@ -7,6 +7,8 @@ import (
 	"github.com/consensys/gnark-crypto/ecc"
 	bls "github.com/consensys/gnark-crypto/ecc/bls12-381"
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
+	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr/fft"
+	// "github.com/consensys/gnark/internal/utils"
 )
 
 type Party struct {
@@ -39,10 +41,12 @@ type CRS struct {
 	g1InvAff bls.G1Affine
 	// Lagrange polynomials
 	tau       fr.Element // FIXME: To remove, only added for testing purposes
+	domain    *fft.Domain
 	H         []fr.Element
 	L         []fr.Element
 	g2Tau     bls.G2Affine
 	vHTau     bls.G2Affine
+	PoT       []bls.G1Affine
 	lagHTaus  []bls.G1Affine // [Lag_i(tau)]
 	lag2HTaus []bls.G2Affine // [g2^Lag_i(tau)]
 	lagLTaus  []bls.G1Affine // [Lag_l(tau)]
@@ -56,6 +60,9 @@ type Params struct {
 	hTaus []bls.G1Affine   // [h^{s_i.Lag_i(tau)}]
 	lTaus [][]bls.G1Affine // [h^{s_i.Lag_l(tau)}]
 	aTaus []bls.G1Affine   // [h_alpha^{s_i}]
+	// Pre-processing weights
+	wqTaus  []bls.G1Affine
+	wqrTaus []bls.G1Affine
 }
 
 type WTS struct {
@@ -67,7 +74,6 @@ type WTS struct {
 }
 
 func GenCRS(n int) CRS {
-	omH := GetOmega(n, 0)
 	var (
 		g1InvAff bls.G1Affine
 		tau      fr.Element
@@ -80,33 +86,38 @@ func GenCRS(n int) CRS {
 	tau.SetRandom()
 	g2Tau.ScalarMultiplication(&g2a, tau.BigInt(&big.Int{}))
 
-	// Computing H and L
+	domain := fft.NewDomain(uint64(n))
+	omH := domain.Generator
 	H := make([]fr.Element, n)
 	for i := 0; i < n; i++ {
 		H[i].Exp(omH, big.NewInt(int64(i)))
 	}
 
-	// FIXME: This is probably not correct
-	// Currently L:{2,3,...,n+1}
-	L := make([]fr.Element, n-1)
-	for i := 0; i < n-1; i++ {
-		L[i] = fr.NewElement(uint64(i + 2))
-	}
-
-	// TODO: To remove this check after fixing the above issue
-	for _, h := range H {
-		for _, l := range L {
-			if h.Equal(&l) {
-				fmt.Println("L and H are not disjoint! PANIC")
-			}
+	var coset, coExp fr.Element
+	one := fr.One()
+	for i := 2; i < n+2; i++ {
+		coset = fr.NewElement(uint64(i))
+		coExp.Exp(coset, big.NewInt(int64(n)))
+		if coExp.Equal(&one) {
+			break
 		}
 	}
+	L := make([]fr.Element, n-1)
+	for i := 0; i < n-1; i++ {
+		L[i].Mul(&coset, &H[i])
+	}
+
+	poT := make([]fr.Element, n)
+	poT[0].SetOne()
+	for i := 1; i < n; i++ {
+		poT[i].Mul(&poT[i-1], &tau)
+	}
+	PoT := bls.BatchScalarMultiplicationG1(&g1a, poT)
 
 	// Computing vHTau
 	var vHTau bls.G2Affine
 	var tauN fr.Element
 	tauN.Exp(tau, big.NewInt(int64(n)))
-	one := fr.One()
 	tauN.Sub(&tauN, &one)
 	vHTau.ScalarMultiplication(&g2a, tauN.BigInt(&big.Int{}))
 
@@ -134,11 +145,13 @@ func GenCRS(n int) CRS {
 		g1a:       g1a,
 		g2a:       g2a,
 		g1InvAff:  g1InvAff,
+		domain:    domain,
 		H:         H,
 		L:         L,
 		tau:       tau,
 		g2Tau:     g2Tau,
 		vHTau:     vHTau,
+		PoT:       PoT,
 		lagHTaus:  lagHTaus,
 		lag2HTaus: lag2HTaus,
 		lagLTaus:  lagLTaus,
@@ -212,11 +225,11 @@ func (w *WTS) keyGen() {
 func (w *WTS) preProcess() {
 	lagLH := make([][]fr.Element, w.n-1)
 	zHL := make([]fr.Element, w.n-1)
+	one := fr.One()
 
 	for l := 0; l < w.n-1; l++ {
 		lagLH[l] = GetLagAt(w.crs.L[l], w.crs.H)
 
-		one := fr.One()
 		zHL[l].Exp(w.crs.L[l], big.NewInt(int64(w.n)))
 		zHL[l].Sub(&zHL[l], &one)
 	}
@@ -228,14 +241,13 @@ func (w *WTS) preProcess() {
 			bases[i] = w.pp.lTaus[i][l]
 		}
 		lagLs[l].MultiExp(bases, lagLH[l], ecc.MultiExpConfig{})
-
 	}
 
 	qTaus := make([]bls.G1Affine, w.n)
-	for i := 0; i < w.n; i++ {
-		bases := make([]bls.G1Affine, w.n-1)
-		exps := make([]fr.Element, w.n-1)
+	bases := make([]bls.G1Affine, w.n-1)
+	exps := make([]fr.Element, w.n-1)
 
+	for i := 0; i < w.n; i++ {
 		for l := 0; l < w.n-1; l++ {
 			bases[l].Sub(&lagLs[l], &w.pp.lTaus[i][l])
 			exps[l].Div(&lagLH[l][i], &zHL[l])
@@ -243,6 +255,57 @@ func (w *WTS) preProcess() {
 		qTaus[i].MultiExp(bases, exps, ecc.MultiExpConfig{})
 	}
 	w.pp.qTaus = qTaus
+
+	// pre-processing weights
+	weightsF := make([]fr.Element, w.n)
+	for i := 0; i < w.n; i++ {
+		weightsF[i] = fr.NewElement(uint64(w.weights[i]))
+	}
+
+	// FIXME: This is incomplete
+	w.qiTaus(weightsF)
+}
+
+func (w *WTS) qiTaus([]fr.Element) []bls.G1Affine {
+	qis := make([]bls.G1Affine, w.n)
+	return qis
+}
+
+func (w *WTS) binaryPf(b []fr.Element) (bls.G1Affine, bls.G2Affine, bls.G1Affine) {
+	one := fr.One()
+	bF := make([]fr.Element, w.n)
+	bNegF := make([]fr.Element, w.n)
+
+	for i := 0; i < w.n; i++ {
+		bF[i] = b[i]
+		bNegF[i].Sub(&one, &b[i])
+	}
+
+	w.crs.domain.FFTInverse(bF, fft.DIF)
+	w.crs.domain.FFTInverse(bNegF, fft.DIF)
+
+	w.crs.domain.FFT(bF, fft.DIT, true)
+	w.crs.domain.FFT(bNegF, fft.DIT, true)
+
+	var den fr.Element
+	den.Exp(w.crs.domain.FrMultiplicativeGen, big.NewInt(int64(w.crs.domain.Cardinality)))
+	den.Sub(&den, &one).Inverse(&den)
+
+	for i := 0; i < w.n; i++ {
+		bF[i].Mul(&bF[i], &bNegF[i]).
+			Mul(&bF[i], &den)
+	}
+	w.crs.domain.FFTInverse(bF, fft.DIF, true)
+	fft.BitReverse(bF)
+
+	var bTau, qTau bls.G1Affine
+	var bNegTau bls.G2Affine
+	qTau.MultiExp(w.crs.PoT, bF, ecc.MultiExpConfig{})
+	bTau.MultiExp(w.crs.lagHTaus, b, ecc.MultiExpConfig{})
+	bNegTau.MultiExp(w.crs.lag2HTaus, b, ecc.MultiExpConfig{})
+	bNegTau.Sub(&w.crs.g2a, &bNegTau)
+
+	return bTau, bNegTau, qTau
 }
 
 // Takes the singing party and signs the message

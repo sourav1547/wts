@@ -1,13 +1,56 @@
 package wts
 
 import (
+	"fmt"
 	"math/big"
+	"math/rand"
 	"testing"
 
 	bls "github.com/consensys/gnark-crypto/ecc/bls12-381"
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
+	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr/fft"
 	"github.com/stretchr/testify/assert"
 )
+
+func TestFFT(t *testing.T) {
+	const n = 1 << 3
+	domain := fft.NewDomain(n)
+
+	coset := domain.CosetTable
+	g := domain.Generator
+	var gi fr.Element
+	fmt.Println("----------------")
+
+	for i, val := range coset {
+		// fmt.Println("Coset Table", val.ToBigIntRegular(&big.Int{}))
+		gi.Exp(g, big.NewInt(int64(i)))
+		if gi.Equal(&val) {
+			fmt.Println("Match found!")
+		}
+	}
+	fmt.Println("----------------")
+
+	eval := make([]fr.Element, n)
+	for i := 0; i < n>>1; i++ {
+		eval[i] = fr.NewElement(uint64(1))
+	}
+	fmt.Println("Before FFT!")
+	for i := 0; i < n; i++ {
+		fmt.Println(eval[i].ToBigIntRegular(&big.Int{}))
+	}
+	domain.FFT(eval, fft.DIF)
+	fmt.Println("After FFT!")
+	for i := 0; i < n; i++ {
+		fmt.Println(eval[i].ToBigIntRegular(&big.Int{}))
+	}
+
+	domain.FFTInverse(eval, fft.DIT)
+	fmt.Println("After FFTInverse!")
+
+	for i := 0; i < n; i++ {
+		fmt.Println(eval[i].ToBigIntRegular(&big.Int{}))
+	}
+}
 
 func BenchmarkCompF(b *testing.B) {
 	logN := 15
@@ -139,14 +182,55 @@ func TestPreProcess(t *testing.T) {
 	}
 }
 
+func TestBin(t *testing.T) {
+	n := 1 << 4
+	ths := n - 1
+	weights := make([]int, n)
+	for i := 0; i < n; i++ {
+		weights[i] = i
+	}
+
+	crs := GenCRS(n)
+	w := NewWTS(n, ths, weights, crs)
+
+	bitV := make([]fr.Element, w.n)
+	bitV[0].SetOne()
+	count := 1
+	for i := 1; i < w.n; i++ {
+		if uint64(rand.Intn(2)) == 1 {
+			bitV[i].SetOne()
+			count += 1
+		}
+	}
+	fmt.Println("Num signers", count)
+	bTau, bNegTau, qTau := w.binaryPf(bitV)
+
+	// Checking correctnes of bNegTau
+	var bNegTauG1 bls.G1Affine
+	bNegTauG1.Sub(&crs.g1a, &bTau)
+	lhs, _ := bls.Pair([]bls.G1Affine{bNegTauG1}, []bls.G2Affine{crs.g2a})
+	rhs, _ := bls.Pair([]bls.G1Affine{crs.g1a}, []bls.G2Affine{bNegTau})
+
+	assert.Equal(t, lhs.Equal(&rhs), true, "Proving BNeg Correctness!")
+
+	// Checking the binary relationship
+	lhs, _ = bls.Pair([]bls.G1Affine{bTau}, []bls.G2Affine{bNegTau})
+	rhs, _ = bls.Pair([]bls.G1Affine{qTau}, []bls.G2Affine{w.crs.vHTau})
+
+	assert.Equal(t, lhs.Equal(&rhs), true, "Proving Binary relation!")
+}
+
 func TestWTSPSign(t *testing.T) {
 	msg := []byte("hello world")
 	var dst []byte
 	roMsg, _ := bls.HashToG2(msg, dst)
 
-	n := 4
+	n := 1 << 4
 	ths := n - 1
-	weights := []int{15, 2, 4, 8}
+	weights := make([]int, n)
+	for i := 0; i < n; i++ {
+		weights[i] = i
+	}
 
 	crs := GenCRS(n)
 	w := NewWTS(n, ths, weights, crs)
@@ -158,6 +242,14 @@ func TestWTSPSign(t *testing.T) {
 		sigmas[i] = w.psign(msg, w.signers[i])
 		assert.Equal(t, w.pverify(roMsg, sigmas[i], w.signers[i].pKeyAff), true)
 	}
+
+	bitV := make([]fr.Element, w.n)
+	for i := 0; i < w.n; i++ {
+		val := uint64(rand.Intn(2))
+		fmt.Println(i, val)
+		bitV[i] = fr.NewElement(val)
+	}
+	w.binaryPf(bitV)
 
 	sig := w.combine(signers, sigmas)
 	assert.Equal(t, w.gverify(msg, sig, ths), true)
