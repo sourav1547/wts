@@ -7,27 +7,23 @@ import (
 	bls "github.com/consensys/gnark-crypto/ecc/bls12-381"
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
 	wts "github.com/sourav1547/wts/src"
-
-	ba "github.com/Workiva/go-datastructures/bitarray"
 )
 
 type MultSigParams struct {
-	secret_keys []big.Int   // signing keys of signers
-	public_keys []bls.G1Jac // verification keys of signers
-	weights     []int       // weight of each signer
-	parties     []MultSigParty
+	sKeys   []fr.Element // signing keys of signers
+	pKeys   []bls.G1Jac  // verification keys of signers
+	parties []MultSigParty
 }
 
 type MultSigParty struct {
-	seckey     big.Int
-	pubkey     bls.G1Jac
-	pubkey_aff bls.G1Affine
-	index      int
+	sKey  fr.Element
+	pKey  bls.G1Affine
+	index int
 }
 
 type MultSignature struct {
 	sig     bls.G2Jac
-	signers ba.BitArray
+	signers []int
 	t       int
 }
 
@@ -37,102 +33,86 @@ type Sig struct {
 }
 
 type MultSig struct {
-	crs        MultSigParams
-	n          int
-	g1         bls.G1Jac
-	g1_aff     bls.G1Affine
-	g1_inv     bls.G1Jac
-	g1_inv_aff bls.G1Affine
-	g2         bls.G2Jac
-	g2_aff     bls.G2Affine
+	crs     MultSigParams
+	n       int
+	weights []int
+	g1      bls.G1Jac
+	g1a     bls.G1Affine
+	g1Inv   bls.G1Jac
+	g1InvAf bls.G1Affine
+	g2      bls.G2Jac
+	g2a     bls.G2Affine
 }
 
-func NewMultSig(n int) MultSig {
-	g1, g2, g1_aff, g2_aff := bls.Generators()
-
+func NewMultSig(n int, weights []int) MultSig {
+	g1, g2, g1a, g2a := bls.Generators()
 	m := MultSig{
-		n:      n,
-		g1:     g1,
-		g1_aff: g1_aff,
-		g2:     g2,
-		g2_aff: g2_aff,
+		n:       n,
+		weights: weights,
+		g1:      g1,
+		g1a:     g1a,
+		g2:      g2,
+		g2a:     g2a,
 	}
-	m.g1_inv.Neg(&m.g1)
-	m.g1_inv_aff.FromJacobian(&m.g1_inv)
-	m.key_gen()
+	m.g1Inv.Neg(&m.g1)
+	m.g1InvAf.FromJacobian(&m.g1Inv)
+	m.keyGen()
 
 	return m
 }
 
-func (m *MultSig) key_gen() {
-	var (
-		sk     fr.Element
-		vk     bls.G1Jac
-		vk_aff bls.G1Affine
-	)
-
-	skeys := make([]big.Int, m.n)
+func (m *MultSig) keyGen() {
+	var vk bls.G1Jac
+	var vkAf bls.G1Affine
+	skeys := make([]fr.Element, m.n)
 	vkeys := make([]bls.G1Jac, m.n)
 	parties := make([]MultSigParty, m.n)
-	weights := make([]int, m.n)
 
 	// Sampling random keys for each signer and computing the corresponding public key
 	for i := 0; i < m.n; i++ {
-		sk.SetRandom()
-		sk.BigInt(&skeys[i])
-		vk.ScalarMultiplication(&m.g1, &skeys[i])
-		vk_aff.FromJacobian(&vk)
+		skeys[i].SetRandom()
+		vk.ScalarMultiplication(&m.g1, skeys[i].BigInt(&big.Int{}))
 
 		vkeys[i] = vk
 		parties[i] = MultSigParty{
-			seckey:     skeys[i],
-			pubkey:     vk,
-			pubkey_aff: vk_aff,
-			index:      i,
+			sKey:  skeys[i],
+			pKey:  *vkAf.FromJacobian(&vk),
+			index: i,
 		}
-		weights[i] = 1
 	}
 
 	m.crs = MultSigParams{
-		secret_keys: skeys,
-		public_keys: vkeys,
-		parties:     parties,
-		weights:     weights,
+		sKeys:   skeys,
+		pKeys:   vkeys,
+		parties: parties,
 	}
 }
 
 // Takes the signing key and signs the message
-func (m *MultSig) psign(msg wts.Message, signer MultSigParty) Sig {
+func (m *MultSig) psign(msg wts.Message, signer MultSigParty) bls.G2Jac {
 	var (
-		dst        []byte
-		sigma      bls.G2Jac
-		ro_msg_jac bls.G2Jac
+		dst   []byte
+		sigma bls.G2Jac
+		roMsg bls.G2Jac
 	)
-	ro_msg, err := bls.HashToG2(msg, dst)
-	ro_msg_jac.FromAffine(&ro_msg)
+	roMsgAf, err := bls.HashToG2(msg, dst)
+	roMsg.FromAffine(&roMsgAf)
 
 	if err != nil {
 		fmt.Printf("Signature error!")
-		return Sig{}
 	}
 
-	sigma.ScalarMultiplication(&ro_msg_jac, &signer.seckey)
-	return Sig{
-		sigma: sigma,
-		index: signer.index,
-	}
+	sigma.ScalarMultiplication(&roMsg, signer.sKey.BigInt(&big.Int{}))
+	return sigma
 }
 
-// Takes the signing key and signs the message
-func (m *MultSig) pverify(ro_msg bls.G2Affine, signature Sig) bool {
-	var sigma_aff bls.G2Affine
-	sigma := signature.sigma
-	sigma_aff.FromJacobian(&sigma)
+// Takes the msg, signature and signing key and verifies the signature
+func (m *MultSig) pverify(roMsg bls.G2Affine, sigma bls.G2Jac, vk bls.G1Affine) bool {
+	var sigmaAff bls.G2Affine
+	sigmaAff.FromJacobian(&sigma)
 
-	vk := m.crs.parties[signature.index].pubkey_aff
-
-	P := []bls.G1Affine{vk, m.g1_inv_aff}
-	Q := []bls.G2Affine{ro_msg, sigma_aff}
+	P := []bls.G1Affine{vk, m.g1InvAf}
+	Q := []bls.G2Affine{roMsg, sigmaAff}
 
 	res, err := bls.PairingCheck(P, Q)
 	if err != nil {
@@ -141,48 +121,60 @@ func (m *MultSig) pverify(ro_msg bls.G2Affine, signature Sig) bool {
 	return res
 }
 
+func (m *MultSig) verifyCombine(msg bls.G2Affine, signers []int, sigmas []bls.G2Jac) MultSignature {
+
+	var vfSigners []int
+	var lIdx []int
+	for i, idx := range signers {
+		if m.pverify(msg, sigmas[i], m.crs.parties[idx].pKey) {
+			vfSigners = append(vfSigners, signers[i])
+			lIdx = append(lIdx, i)
+		}
+	}
+
+	vfSigs := make([]bls.G2Jac, len(vfSigners))
+	for i, idx := range lIdx {
+		vfSigs[i] = sigmas[idx]
+	}
+
+	return m.combine(vfSigners, vfSigs)
+}
+
 // The multisignature aggregation function
 // This function assumes that the signatures are already validated
 // Here we are assuming that rouge key attack has been handled using Proof-of-Possesion
-func (m *MultSig) combine(sigmas []Sig) (MultSignature, error) {
-	var sig bls.G2Jac
-	signers := ba.NewBitArray(uint64(m.n))
+func (m *MultSig) combine(signers []int, sigmas []bls.G2Jac) MultSignature {
 	wt := 0
-
-	// FIXME: Create the list of signers properly
-	for i := 0; i < len(sigmas); i++ {
-		sig.AddAssign(&sigmas[i].sigma)
-		signers.SetBit(uint64(sigmas[i].index))
-		wt += m.crs.weights[i]
-
+	var aggSig bls.G2Jac
+	for i, idx := range signers {
+		aggSig.AddAssign(&sigmas[i])
+		wt += m.weights[idx]
 	}
 
 	return MultSignature{
-		sig:     sig,
+		sig:     aggSig,
 		signers: signers,
 		t:       wt,
-	}, nil
+	}
 }
 
 // TODO: To optimize this
-func (m *MultSig) gverify(msg_aff bls.G2Affine, msig MultSignature) bool {
+func (m *MultSig) gverify(msg bls.G2Affine, msig MultSignature) bool {
 	var (
-		apk     bls.G1Jac    // Aggregated public key
-		apk_aff bls.G1Affine // Affine apk
-		sig_aff bls.G2Affine // H(m)^priv
+		apk   bls.G1Jac    // Aggregated public key
+		apkAf bls.G1Affine // Affine apk
+		sigAf bls.G2Affine // H(m)^priv
 	)
 
-	for i := 0; i < m.n; i++ {
-		set, _ := msig.signers.GetBit(uint64(i))
-		if set {
-			apk.AddAssign(&m.crs.public_keys[i])
-		}
+	wt := 0
+	for _, idx := range msig.signers {
+		apk.AddAssign(&m.crs.pKeys[idx])
+		wt += m.weights[idx]
 	}
-	apk_aff.FromJacobian(&apk)
-	sig_aff.FromJacobian(&msig.sig)
 
-	lhs, _ := bls.Pair([]bls.G1Affine{apk_aff}, []bls.G2Affine{msg_aff})
-	rhs, _ := bls.Pair([]bls.G1Affine{m.g1_aff}, []bls.G2Affine{sig_aff})
+	apkAf.FromJacobian(&apk)
+	sigAf.FromJacobian(&msig.sig)
 
-	return lhs.Equal(&rhs)
+	res, _ := bls.PairingCheck([]bls.G1Affine{apkAf, m.g1InvAf}, []bls.G2Affine{msg, sigAf})
+	return res && (wt <= msig.t)
 }
