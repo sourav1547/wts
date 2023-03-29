@@ -20,16 +20,16 @@ type Party struct {
 
 type IPAProof struct {
 	qTau  bls.G1Affine
-	rTau  bls.G1Affine
 	qrTau bls.G1Affine
 }
 
 type Sig struct {
-	bTau   bls.G2Affine // Commitment to the bitvector
-	ths    int          // Threshold
-	pi     []IPAProof   // IPA proofs
-	aggPk  bls.G1Affine // Aggregated public key
-	aggSig bls.G2Jac    // Aggregated signature
+	bTau    bls.G1Affine // Commitment to the bitvector
+	bNegTau bls.G2Affine // Commitment to the bitvector in G2
+	ths     int          // Threshold
+	pi      []IPAProof   // IPA proofs
+	aggPk   bls.G1Affine // Aggregated public key
+	aggSig  bls.G2Jac    // Aggregated signature
 }
 
 type CRS struct {
@@ -160,7 +160,7 @@ func GenCRS(n int) CRS {
 	}
 }
 
-func NewWTS(n, ths int, weights []int, crs CRS) WTS {
+func NewWTS(n int, weights []int, crs CRS) WTS {
 	w := WTS{
 		n:       n,
 		weights: weights,
@@ -271,21 +271,17 @@ func (w *WTS) preProcess() {
 	w.pp.wTau = wTauAf
 }
 
-func (w *WTS) weightsPf(signers []int) (bls.G1Affine, bls.G1Affine, bls.G1Affine, int) {
-
-	b := make([]fr.Element, w.n)
+func (w *WTS) weightsPf(signers []int) (bls.G1Affine, bls.G1Affine) {
 	bF := make([]fr.Element, w.n)
 	wF := make([]fr.Element, w.n)
 	rF := make([]fr.Element, w.n)
 
-	var ths int
 	for i := 0; i < w.n; i++ {
-		ths += signers[i] * w.weights[i]
-
-		b[i] = fr.NewElement(uint64(signers[i]))
-		bF[i] = b[i]
 		wF[i] = fr.NewElement(uint64(w.weights[i]))
-		rF[i].Mul(&bF[i], &wF[i])
+	}
+	for _, idx := range signers {
+		bF[idx] = fr.One()
+		rF[idx] = wF[idx]
 	}
 
 	var rTau bls.G1Jac
@@ -316,30 +312,29 @@ func (w *WTS) weightsPf(signers []int) (bls.G1Affine, bls.G1Affine, bls.G1Affine
 	fft.BitReverse(bF)
 	fft.BitReverse(rF)
 
-	var bTau, qTau, qrTau bls.G1Jac
-	var bTauAf, qTauAf, qrTauAf bls.G1Affine
+	var qTau, qrTau bls.G1Jac
+	var qTauAf, qrTauAf bls.G1Affine
 
 	qTau.MultiExp(w.crs.PoT, bF, ecc.MultiExpConfig{})
 	qrTau.MultiExp(w.crs.PoT[:w.n-1], rF[1:], ecc.MultiExpConfig{})
-	bTau.MultiExp(w.crs.lagHTaus, b, ecc.MultiExpConfig{})
 
-	bTauAf.FromJacobian(&bTau)
 	qTauAf.FromJacobian(&qTau)
 	qrTauAf.FromJacobian(&qrTau)
 
-	return bTauAf, qTauAf, qrTauAf, ths
+	return qTauAf, qrTauAf
 }
 
-func (w *WTS) binaryPf(signers []int) (bls.G1Affine, bls.G2Affine, bls.G1Affine) {
+func (w *WTS) binaryPf(signers []int) bls.G1Affine {
 	one := fr.One()
-	b := make([]fr.Element, w.n)
 	bF := make([]fr.Element, w.n)
 	bNegF := make([]fr.Element, w.n)
 
 	for i := 0; i < w.n; i++ {
-		b[i] = fr.NewElement(uint64(signers[i]))
-		bF[i] = b[i]
-		bNegF[i].Sub(&one, &b[i])
+		bNegF[i] = fr.One()
+	}
+	for _, idx := range signers {
+		bF[idx] = fr.One()
+		bNegF[idx].SetZero()
 	}
 
 	w.crs.domain.FFTInverse(bF, fft.DIF)
@@ -359,21 +354,14 @@ func (w *WTS) binaryPf(signers []int) (bls.G1Affine, bls.G2Affine, bls.G1Affine)
 	w.crs.domain.FFTInverse(bF, fft.DIF, true)
 	fft.BitReverse(bF)
 
-	var bTau, qTau bls.G1Jac
-	var bNegTau bls.G2Jac
+	var (
+		qTau   bls.G1Jac
+		qTauAf bls.G1Affine
+	)
 	qTau.MultiExp(w.crs.PoT, bF, ecc.MultiExpConfig{})
-	bTau.MultiExp(w.crs.lagHTaus, b, ecc.MultiExpConfig{})
-
-	bNegTau.MultiExp(w.crs.lag2HTaus, b, ecc.MultiExpConfig{})
-	bNegTau.Neg(&bNegTau)
-	bNegTau.AddAssign(&w.crs.g2)
-
-	var bNegTauAf bls.G2Affine
-	var bTauAf, qTauAf bls.G1Affine
-	bTauAf.FromJacobian(&bTau)
 	qTauAf.FromJacobian(&qTau)
-	bNegTauAf.FromJacobian(&bNegTau)
-	return bTauAf, bNegTauAf, qTauAf
+
+	return qTauAf
 }
 
 // Takes the singing party and signs the message
@@ -408,19 +396,20 @@ func (w *WTS) pverify(roMsg bls.G2Affine, sigma bls.G2Jac, vk bls.G1Affine) bool
 // The combine function
 func (w *WTS) combine(signers []int, sigmas []bls.G2Jac) Sig {
 	var (
-		bTau  bls.G2Affine
-		qTau  bls.G1Affine
-		rTau  bls.G1Affine
-		aggPk bls.G1Affine
+		bTau    bls.G1Affine
+		bNegTau bls.G2Affine
+		qTau    bls.G1Affine
+		aggPk   bls.G1Affine
 	)
 	weight := 0
 	for _, idx := range signers {
-		bTau.Add(&bTau, &w.crs.lag2HTaus[idx])
+		bTau.Add(&bTau, &w.crs.lagHTaus[idx])
+		bNegTau.Add(&bNegTau, &w.crs.lag2HTaus[idx])
 		qTau.Add(&qTau, &w.pp.qTaus[idx])
-		rTau.Add(&rTau, &w.pp.hTaus[idx])
 		aggPk.Add(&aggPk, &w.pp.pKeys[idx])
 		weight += w.weights[idx]
 	}
+	bNegTau.Sub(&w.crs.g2a, &bNegTau)
 
 	// Compute qrTau and checking its correctness
 	var (
@@ -452,18 +441,28 @@ func (w *WTS) combine(signers []int, sigmas []bls.G2Jac) Sig {
 		aggSig.AddAssign(&sig)
 	}
 
-	pf1 := IPAProof{
+	pfP := IPAProof{
 		qTau:  qTau,
-		rTau:  rTau,
 		qrTau: qrTau,
 	}
 
+	pfB := IPAProof{
+		qTau: w.binaryPf(signers),
+	}
+
+	qwTau, qrwTau := w.weightsPf(signers)
+	pfW := IPAProof{
+		qTau:  qwTau,
+		qrTau: qrwTau,
+	}
+
 	return Sig{
-		pi:     []IPAProof{pf1},
-		ths:    weight,
-		bTau:   bTau,
-		aggSig: aggSig,
-		aggPk:  aggPk,
+		pi:      []IPAProof{pfP, pfB, pfW},
+		ths:     weight,
+		bTau:    bTau,
+		bNegTau: bNegTau,
+		aggSig:  aggSig,
+		aggPk:   aggPk,
 	}
 }
 
@@ -480,23 +479,28 @@ func (w *WTS) gverify(msg Message, sigma Sig, ths int) bool {
 
 	res, _ := bls.PairingCheck(P, Q)
 
-	// 2.1 Checking aggP, i.e., s(tau)b(tau) = q(tau)z(tau) + r(tau)
-	aggPi := sigma.pi[0]
-	lhs, _ := bls.Pair([]bls.G1Affine{w.pp.pComm}, []bls.G2Affine{sigma.bTau})
-	rhs, _ := bls.Pair([]bls.G1Affine{aggPi.qTau, aggPi.rTau}, []bls.G2Affine{w.crs.vHTau, w.crs.g2a})
-
-	res = res && lhs.Equal(&rhs)
-
-	// 2.2 Checking r(tau) = q_r(tau)tau + aggPk/n  is correct
+	// 2 Checking aggP, i.e., s(tau)b(tau) = q(tau)z(tau) + tau q_r(tau) + aggPk/n
 	var aggPkN bls.G1Affine
 	nInv := fr.NewElement(uint64(w.n))
 	nInv.Inverse(&nInv)
 	aggPkN.ScalarMultiplication(&sigma.aggPk, nInv.BigInt(&big.Int{}))
 
-	lhs, _ = bls.Pair([]bls.G1Affine{aggPi.rTau}, []bls.G2Affine{w.crs.g2a})
-	rhs, _ = bls.Pair([]bls.G1Affine{aggPi.qrTau, aggPkN}, []bls.G2Affine{w.crs.g2Tau, w.crs.g2a})
+	aggPi := sigma.pi[0]
+	lhs, _ := bls.Pair([]bls.G1Affine{w.pp.pComm}, []bls.G2Affine{})
+	rhs, _ := bls.Pair([]bls.G1Affine{aggPi.qTau, aggPi.qrTau, aggPkN}, []bls.G2Affine{w.crs.vHTau, w.crs.g2Tau, w.crs.g2a})
 
-	res = res && lhs.Equal(&rhs)
-
-	return res
+	return res && lhs.Equal(&rhs)
 }
+
+// func (w *WTS) verifyBin() {
+// 	var bNegTauG1 bls.G1Affine
+// 	bNegTauG1.Sub(&w.crs.g1a, &bTau)
+// 	lhs, _ := bls.Pair([]bls.G1Affine{bNegTauG1}, []bls.G2Affine{crs.g2a})
+// 	rhs, _ := bls.Pair([]bls.G1Affine{crs.g1a}, []bls.G2Affine{bNegTau})
+// 	assert.Equal(t, lhs.Equal(&rhs), true, "Proving BNeg Correctness!")
+
+// 	// Checking the binary relation
+// 	lhs, _ = bls.Pair([]bls.G1Affine{bTau}, []bls.G2Affine{bNegTau})
+// 	rhs, _ = bls.Pair([]bls.G1Affine{qTau}, []bls.G2Affine{w.crs.vHTau})
+// 	assert.Equal(t, lhs.Equal(&rhs), true, "Proving Binary relation!")
+// }
