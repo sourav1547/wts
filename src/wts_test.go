@@ -151,17 +151,21 @@ func TestBin(t *testing.T) {
 
 	var bTau bls.G1Affine
 	var bNegTau bls.G2Affine
-	count := n - 1
-	signers := make([]int, count)
+
+	var signers []int
 	ths := 0
-	for i := 0; i < count; i++ {
-		signers[i] = i
-		bTau.Add(&bTau, &crs.lagHTaus[i])
-		bNegTau.Add(&bNegTau, &crs.lag2HTaus[i])
-		ths += weights[i]
+	for i := 0; i < n; i++ {
+		if rand.Intn(2) == 1 {
+			signers = append(signers, i)
+			// sigmas = append(sigmas, w.psign(msg, w.signers[i]))
+			bTau.Add(&bTau, &crs.lagHTaus[i])
+			bNegTau.Add(&bNegTau, &crs.lag2HTaus[i])
+			ths += weights[i]
+		}
 	}
 	bNegTau.Sub(&crs.g2a, &bNegTau)
 	qTau := w.binaryPf(signers)
+	fmt.Println("Signers ", len(signers), "Threshold", ths)
 
 	var bNegTauG1 bls.G1Affine
 	bNegTauG1.Sub(&w.crs.g1a, &bTau)
@@ -190,11 +194,9 @@ func TestBin(t *testing.T) {
 
 func TestWTSPSign(t *testing.T) {
 	msg := []byte("hello world")
-	var dst []byte
-	roMsg, _ := bls.HashToG2(msg, dst)
+	roMsg, _ := bls.HashToG2(msg, []byte{})
 
 	n := 1 << 4
-	ths := n - 1
 	weights := make([]int, n)
 	for i := 0; i < n; i++ {
 		weights[i] = i
@@ -203,26 +205,21 @@ func TestWTSPSign(t *testing.T) {
 	crs := GenCRS(n)
 	w := NewWTS(n, weights, crs)
 
-	signers := make([]int, ths)
-	sigmas := make([]bls.G2Jac, ths)
-	for i := 0; i < ths; i++ {
-		signers[i] = i
-		sigmas[i] = w.psign(msg, w.signers[i])
-		assert.Equal(t, w.pverify(roMsg, sigmas[i], w.signers[i].pKeyAff), true)
-	}
-
-	bitV := make([]int, w.n)
-	bitV[0] = 1
-	count := 1
-	for i := 1; i < w.n; i++ {
-		if uint64(rand.Intn(2)) == 1 {
-			bitV[i] = 1
-			count += 1
+	var signers []int
+	var sigmas []bls.G2Jac
+	ths := 0
+	for i := 0; i < n; i++ {
+		if rand.Intn(2) == 1 {
+			signers = append(signers, i)
+			sigmas = append(sigmas, w.psign(msg, w.signers[i]))
+			ths += weights[i]
 		}
 	}
-	fmt.Println("Num signers", count)
 
-	w.binaryPf(bitV)
+	for i, idx := range signers {
+		assert.Equal(t, w.pverify(roMsg, sigmas[i], w.signers[idx].pKeyAff), true)
+	}
+	fmt.Println("Signers ", len(signers), "Threshold", ths)
 
 	sig := w.combine(signers, sigmas)
 	assert.Equal(t, w.gverify(msg, sig, ths), true)

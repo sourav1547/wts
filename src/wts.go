@@ -476,31 +476,34 @@ func (w *WTS) gverify(msg Message, sigma Sig, ths int) bool {
 
 	P := []bls.G1Affine{sigma.aggPk, w.crs.g1InvAff}
 	Q := []bls.G2Affine{roMsg, sigAff}
-
 	res, _ := bls.PairingCheck(P, Q)
 
-	// 2 Checking aggP, i.e., s(tau)b(tau) = q(tau)z(tau) + tau q_r(tau) + aggPk/n
-	var aggPkN bls.G1Affine
+	pfP := sigma.pi[0]
+	pfB := sigma.pi[1]
+	pfW := sigma.pi[2]
+
+	// Computing g^{1/n}
+	var gNInv bls.G2Affine
 	nInv := fr.NewElement(uint64(w.n))
 	nInv.Inverse(&nInv)
-	aggPkN.ScalarMultiplication(&sigma.aggPk, nInv.BigInt(&big.Int{}))
+	gNInv.ScalarMultiplication(&w.crs.g2a, nInv.BigInt(&big.Int{}))
 
-	aggPi := sigma.pi[0]
-	lhs, _ := bls.Pair([]bls.G1Affine{w.pp.pComm}, []bls.G2Affine{})
-	rhs, _ := bls.Pair([]bls.G1Affine{aggPi.qTau, aggPi.qrTau, aggPkN}, []bls.G2Affine{w.crs.vHTau, w.crs.g2Tau, w.crs.g2a})
+	// Checking the binary relation
+	lhs, _ := bls.Pair([]bls.G1Affine{sigma.bTau}, []bls.G2Affine{sigma.bNegTau})
+	rhs, _ := bls.Pair([]bls.G1Affine{pfB.qTau}, []bls.G2Affine{w.crs.vHTau})
+	res = res && lhs.Equal(&rhs)
 
-	return res && lhs.Equal(&rhs)
+	var gThs bls.G1Affine
+	gThs.ScalarMultiplication(&w.crs.g1a, big.NewInt(int64(sigma.ths)))
+	lhs, _ = bls.Pair([]bls.G1Affine{sigma.bTau}, []bls.G2Affine{w.pp.wTau})
+	rhs, _ = bls.Pair([]bls.G1Affine{pfW.qTau, pfW.qrTau, gThs}, []bls.G2Affine{w.crs.vHTau, w.crs.g2Tau, gNInv})
+
+	// 2 Checking aggP, i.e., s(tau)b(tau) = q(tau)z(tau) + tau q_r(tau) + aggPk/n
+	var b2Tau bls.G2Affine
+	b2Tau.Sub(&w.crs.g2a, &sigma.bNegTau)
+	lhs, _ = bls.Pair([]bls.G1Affine{w.pp.pComm}, []bls.G2Affine{b2Tau})
+	rhs, _ = bls.Pair([]bls.G1Affine{pfP.qTau, pfP.qrTau, sigma.aggPk}, []bls.G2Affine{w.crs.vHTau, w.crs.g2Tau, gNInv})
+	res = res && lhs.Equal(&rhs)
+
+	return res && (ths <= sigma.ths)
 }
-
-// func (w *WTS) verifyBin() {
-// 	var bNegTauG1 bls.G1Affine
-// 	bNegTauG1.Sub(&w.crs.g1a, &bTau)
-// 	lhs, _ := bls.Pair([]bls.G1Affine{bNegTauG1}, []bls.G2Affine{crs.g2a})
-// 	rhs, _ := bls.Pair([]bls.G1Affine{crs.g1a}, []bls.G2Affine{bNegTau})
-// 	assert.Equal(t, lhs.Equal(&rhs), true, "Proving BNeg Correctness!")
-
-// 	// Checking the binary relation
-// 	lhs, _ = bls.Pair([]bls.G1Affine{bTau}, []bls.G2Affine{bNegTau})
-// 	rhs, _ = bls.Pair([]bls.G1Affine{qTau}, []bls.G2Affine{w.crs.vHTau})
-// 	assert.Equal(t, lhs.Equal(&rhs), true, "Proving Binary relation!")
-// }
