@@ -155,7 +155,7 @@ func TestKeyGen(t *testing.T) {
 }
 
 func TestPreProcess(t *testing.T) {
-	n := 1 << 4
+	n := 1 << 5
 	ths := n - 1
 	weights := make([]int, n)
 	for i := 0; i < n; i++ {
@@ -183,7 +183,7 @@ func TestPreProcess(t *testing.T) {
 }
 
 func TestBin(t *testing.T) {
-	n := 1 << 4
+	n := 1 << 5
 	ths := n - 1
 	weights := make([]int, n)
 	for i := 0; i < n; i++ {
@@ -193,12 +193,12 @@ func TestBin(t *testing.T) {
 	crs := GenCRS(n)
 	w := NewWTS(n, ths, weights, crs)
 
-	bitV := make([]fr.Element, w.n)
-	bitV[0].SetOne()
+	bitV := make([]int, w.n)
+	bitV[0] = 1
 	count := 1
 	for i := 1; i < w.n; i++ {
 		if uint64(rand.Intn(2)) == 1 {
-			bitV[i].SetOne()
+			bitV[i] = 1
 			count += 1
 		}
 	}
@@ -210,14 +210,25 @@ func TestBin(t *testing.T) {
 	bNegTauG1.Sub(&crs.g1a, &bTau)
 	lhs, _ := bls.Pair([]bls.G1Affine{bNegTauG1}, []bls.G2Affine{crs.g2a})
 	rhs, _ := bls.Pair([]bls.G1Affine{crs.g1a}, []bls.G2Affine{bNegTau})
-
 	assert.Equal(t, lhs.Equal(&rhs), true, "Proving BNeg Correctness!")
 
-	// Checking the binary relationship
+	// Checking the binary relation
 	lhs, _ = bls.Pair([]bls.G1Affine{bTau}, []bls.G2Affine{bNegTau})
 	rhs, _ = bls.Pair([]bls.G1Affine{qTau}, []bls.G2Affine{w.crs.vHTau})
-
 	assert.Equal(t, lhs.Equal(&rhs), true, "Proving Binary relation!")
+
+	// Checking weights relation
+	bwTau, qwTau, qrwTau, ths := w.weightsPf(bitV)
+
+	var gThs bls.G1Affine
+	nInv := fr.NewElement(uint64(w.n))
+	nInv.Inverse(&nInv)
+	gThs.ScalarMultiplication(&w.crs.g1a, big.NewInt(int64(ths)))
+	gThs.ScalarMultiplication(&gThs, nInv.BigInt(&big.Int{}))
+
+	lhs, _ = bls.Pair([]bls.G1Affine{bwTau}, []bls.G2Affine{w.pp.wTau})
+	rhs, _ = bls.Pair([]bls.G1Affine{qwTau, qrwTau, gThs}, []bls.G2Affine{w.crs.vHTau, w.crs.g2Tau, w.crs.g2a})
+	assert.Equal(t, lhs.Equal(&rhs), true, "Proving weights!")
 }
 
 func TestWTSPSign(t *testing.T) {
@@ -243,11 +254,11 @@ func TestWTSPSign(t *testing.T) {
 		assert.Equal(t, w.pverify(roMsg, sigmas[i], w.signers[i].pKeyAff), true)
 	}
 
-	bitV := make([]fr.Element, w.n)
+	bitV := make([]int, w.n)
 	for i := 0; i < w.n; i++ {
-		val := uint64(rand.Intn(2))
+		val := rand.Intn(2)
 		fmt.Println(i, val)
-		bitV[i] = fr.NewElement(val)
+		bitV[i] = val
 	}
 	w.binaryPf(bitV)
 

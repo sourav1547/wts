@@ -55,6 +55,7 @@ type CRS struct {
 
 type Params struct {
 	pComm bls.G1Affine     // com(g^s_i)
+	wTau  bls.G2Affine     // com(weights)
 	pKeys []bls.G1Affine   // [g^s_i]
 	qTaus []bls.G1Affine   // [h^{s_i.q_i(tau)}]
 	hTaus []bls.G1Affine   // [h^{s_i.Lag_i(tau)}]
@@ -262,21 +263,81 @@ func (w *WTS) preProcess() {
 		weightsF[i] = fr.NewElement(uint64(w.weights[i]))
 	}
 
-	// FIXME: This is incomplete
-	w.qiTaus(weightsF)
+	var wTau bls.G2Jac
+	var wTauAf bls.G2Affine
+	wTau.MultiExp(w.crs.lag2HTaus, weightsF, ecc.MultiExpConfig{})
+	wTauAf.FromJacobian(&wTau)
+
+	w.pp.wTau = wTauAf
 }
 
-func (w *WTS) qiTaus([]fr.Element) []bls.G1Affine {
-	qis := make([]bls.G1Affine, w.n)
-	return qis
-}
+func (w *WTS) weightsPf(signers []int) (bls.G1Affine, bls.G1Affine, bls.G1Affine, int) {
 
-func (w *WTS) binaryPf(b []fr.Element) (bls.G1Affine, bls.G2Affine, bls.G1Affine) {
+	b := make([]fr.Element, w.n)
+	bF := make([]fr.Element, w.n)
+	wF := make([]fr.Element, w.n)
+	rF := make([]fr.Element, w.n)
+
+	var ths int
+	for i := 0; i < w.n; i++ {
+		ths += signers[i] * w.weights[i]
+
+		b[i] = fr.NewElement(uint64(signers[i]))
+		bF[i] = b[i]
+		wF[i] = fr.NewElement(uint64(w.weights[i]))
+		rF[i].Mul(&bF[i], &wF[i])
+	}
+
+	var rTau bls.G1Jac
+	var rTauAf bls.G1Affine
+	rTau.MultiExp(w.crs.lagHTaus, rF, ecc.MultiExpConfig{})
+	rTauAf.FromJacobian(&rTau)
+
+	w.crs.domain.FFTInverse(bF, fft.DIF)
+	w.crs.domain.FFTInverse(wF, fft.DIF)
+	w.crs.domain.FFTInverse(rF, fft.DIF)
+
+	w.crs.domain.FFT(bF, fft.DIT, true)
+	w.crs.domain.FFT(wF, fft.DIT, true)
+	w.crs.domain.FFT(rF, fft.DIT, true)
+
 	one := fr.One()
+	var den fr.Element
+	den.Exp(w.crs.domain.FrMultiplicativeGen, big.NewInt(int64(w.crs.domain.Cardinality)))
+	den.Sub(&den, &one).Inverse(&den)
+
+	for i := 0; i < w.n; i++ {
+		bF[i].Mul(&bF[i], &wF[i]).
+			Sub(&bF[i], &rF[i]).
+			Mul(&bF[i], &den)
+	}
+	w.crs.domain.FFTInverse(bF, fft.DIF, true)
+	w.crs.domain.FFTInverse(rF, fft.DIF, true)
+	fft.BitReverse(bF)
+	fft.BitReverse(rF)
+
+	var bTau, qTau, qrTau bls.G1Jac
+	var bTauAf, qTauAf, qrTauAf bls.G1Affine
+
+	qTau.MultiExp(w.crs.PoT, bF, ecc.MultiExpConfig{})
+	qrTau.MultiExp(w.crs.PoT[:w.n-1], rF[1:], ecc.MultiExpConfig{})
+	bTau.MultiExp(w.crs.lagHTaus, b, ecc.MultiExpConfig{})
+
+	bTauAf.FromJacobian(&bTau)
+	qTauAf.FromJacobian(&qTau)
+	qrTauAf.FromJacobian(&qrTau)
+
+	return bTauAf, qTauAf, qrTauAf, ths
+}
+
+func (w *WTS) binaryPf(signers []int) (bls.G1Affine, bls.G2Affine, bls.G1Affine) {
+	one := fr.One()
+	b := make([]fr.Element, w.n)
 	bF := make([]fr.Element, w.n)
 	bNegF := make([]fr.Element, w.n)
 
 	for i := 0; i < w.n; i++ {
+		b[i] = fr.NewElement(uint64(signers[i]))
 		bF[i] = b[i]
 		bNegF[i].Sub(&one, &b[i])
 	}
@@ -298,14 +359,21 @@ func (w *WTS) binaryPf(b []fr.Element) (bls.G1Affine, bls.G2Affine, bls.G1Affine
 	w.crs.domain.FFTInverse(bF, fft.DIF, true)
 	fft.BitReverse(bF)
 
-	var bTau, qTau bls.G1Affine
-	var bNegTau bls.G2Affine
+	var bTau, qTau bls.G1Jac
+	var bNegTau bls.G2Jac
 	qTau.MultiExp(w.crs.PoT, bF, ecc.MultiExpConfig{})
 	bTau.MultiExp(w.crs.lagHTaus, b, ecc.MultiExpConfig{})
-	bNegTau.MultiExp(w.crs.lag2HTaus, b, ecc.MultiExpConfig{})
-	bNegTau.Sub(&w.crs.g2a, &bNegTau)
 
-	return bTau, bNegTau, qTau
+	bNegTau.MultiExp(w.crs.lag2HTaus, b, ecc.MultiExpConfig{})
+	bNegTau.Neg(&bNegTau)
+	bNegTau.AddAssign(&w.crs.g2)
+
+	var bNegTauAf bls.G2Affine
+	var bTauAf, qTauAf bls.G1Affine
+	bTauAf.FromJacobian(&bTau)
+	qTauAf.FromJacobian(&qTau)
+	bNegTauAf.FromJacobian(&bNegTau)
+	return bTauAf, bNegTauAf, qTauAf
 }
 
 // Takes the singing party and signs the message
