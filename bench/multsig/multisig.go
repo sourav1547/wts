@@ -22,14 +22,9 @@ type MultSigParty struct {
 }
 
 type MultSignature struct {
-	sig     bls.G2Jac
+	sig     bls.G2Affine
 	signers []int
 	t       int
-}
-
-type Sig struct {
-	sigma bls.G2Jac
-	index int
 }
 
 type MultSig struct {
@@ -150,20 +145,20 @@ func (m *MultSig) combine(signers []int, sigmas []bls.G2Jac) MultSignature {
 		aggSig.AddAssign(&sigmas[i])
 		wt += m.weights[idx]
 	}
+	var aggSigAf bls.G2Affine
+	aggSigAf.FromJacobian(&aggSig)
 
 	return MultSignature{
-		sig:     aggSig,
+		sig:     aggSigAf,
 		signers: signers,
 		t:       wt,
 	}
 }
 
-// TODO: To optimize this
 func (m *MultSig) gverify(msg bls.G2Affine, msig MultSignature) bool {
 	var (
 		apk   bls.G1Jac    // Aggregated public key
 		apkAf bls.G1Affine // Affine apk
-		sigAf bls.G2Affine // H(m)^priv
 	)
 
 	wt := 0
@@ -171,10 +166,8 @@ func (m *MultSig) gverify(msg bls.G2Affine, msig MultSignature) bool {
 		apk.AddAssign(&m.crs.pKeys[idx])
 		wt += m.weights[idx]
 	}
-
 	apkAf.FromJacobian(&apk)
-	sigAf.FromJacobian(&msig.sig)
 
-	res, _ := bls.PairingCheck([]bls.G1Affine{apkAf, m.g1InvAf}, []bls.G2Affine{msg, sigAf})
-	return res && (wt <= msig.t)
+	res, _ := bls.PairingCheck([]bls.G1Affine{apkAf, m.g1InvAf}, []bls.G2Affine{msg, msig.sig})
+	return res && (wt >= msig.t)
 }
