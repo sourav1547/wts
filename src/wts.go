@@ -53,7 +53,7 @@ type CRS struct {
 
 type Params struct {
 	pComm bls.G1Affine     // com(g^s_i)
-	wTau  bls.G2Affine     // com(weights)
+	wTau  bls.G1Affine     // com(weights)
 	pKeys []bls.G1Affine   // [g^s_i]
 	qTaus []bls.G1Affine   // [h^{s_i.q_i(tau)}]
 	hTaus []bls.G1Affine   // [h^{s_i.Lag_i(tau)}]
@@ -166,7 +166,6 @@ func NewWTS(n int, weights []int, crs CRS) WTS {
 		crs:     crs,
 	}
 	w.keyGen()
-	w.preProcess()
 	return w
 }
 
@@ -220,34 +219,31 @@ func (w *WTS) preProcess() {
 	zHL := make([]fr.Element, w.n-1)
 	one := fr.One()
 
+	// Can be be made part of Setup
 	for l := 0; l < w.n-1; l++ {
 		lagLH[l] = GetLagAt(w.crs.L[l], w.crs.H)
-
 		zHL[l].Exp(w.crs.L[l], big.NewInt(int64(w.n)))
 		zHL[l].Sub(&zHL[l], &one)
 	}
 
-	lagLs := make([]bls.G1Affine, w.n-1)
+	lagLsJac := make([]bls.G1Jac, w.n-1)
 	for l := 0; l < w.n-1; l++ {
-		bases := make([]bls.G1Affine, w.n)
-		for i := 0; i < w.n; i++ {
-			bases[i] = w.pp.lTaus[l][i]
-		}
-		lagLs[l].MultiExp(bases, lagLH[l], ecc.MultiExpConfig{})
+		lagLsJac[l].MultiExp(w.pp.lTaus[l], lagLH[l], ecc.MultiExpConfig{})
 	}
+	lagLs := bls.BatchJacobianToAffineG1(lagLsJac)
 
-	qTaus := make([]bls.G1Affine, w.n)
+	qTaus := make([]bls.G1Jac, w.n)
 	bases := make([]bls.G1Affine, w.n-1)
 	exps := make([]fr.Element, w.n-1)
 
 	for i := 0; i < w.n; i++ {
 		for l := 0; l < w.n-1; l++ {
 			bases[l].Sub(&lagLs[l], &w.pp.lTaus[l][i])
-			exps[l].Div(&lagLH[l][i], &zHL[l])
+			exps[l].Div(&lagLH[l][i], &zHL[l]) // Can also be pushed to Setup
 		}
 		qTaus[i].MultiExp(bases, exps, ecc.MultiExpConfig{})
 	}
-	w.pp.qTaus = qTaus
+	w.pp.qTaus = bls.BatchJacobianToAffineG1(qTaus)
 
 	// pre-processing weights
 	weightsF := make([]fr.Element, w.n)
@@ -255,9 +251,9 @@ func (w *WTS) preProcess() {
 		weightsF[i] = fr.NewElement(uint64(w.weights[i]))
 	}
 
-	var wTau bls.G2Jac
-	var wTauAf bls.G2Affine
-	wTau.MultiExp(w.crs.lag2HTaus, weightsF, ecc.MultiExpConfig{})
+	var wTau bls.G1Jac
+	var wTauAf bls.G1Affine
+	wTau.MultiExp(w.crs.lagHTaus, weightsF, ecc.MultiExpConfig{})
 	wTauAf.FromJacobian(&wTau)
 
 	w.pp.wTau = wTauAf
@@ -475,6 +471,7 @@ func (w *WTS) gverify(msg Message, sigma Sig, ths int) bool {
 	pfW := sigma.pi[2]
 
 	// Computing g^{1/n}
+	// TODO: Can pre-process it
 	var gNInv bls.G2Affine
 	nInv := fr.NewElement(uint64(w.n))
 	nInv.Inverse(&nInv)
@@ -485,14 +482,16 @@ func (w *WTS) gverify(msg Message, sigma Sig, ths int) bool {
 	rhs, _ := bls.Pair([]bls.G1Affine{pfB.qTau}, []bls.G2Affine{w.crs.vHTau})
 	res = res && lhs.Equal(&rhs)
 
+	var b2Tau bls.G2Affine
+	b2Tau.Sub(&w.crs.g2a, &sigma.bNegTau)
+
 	var gThs bls.G1Affine
 	gThs.ScalarMultiplication(&w.crs.g1a, big.NewInt(int64(sigma.ths)))
-	lhs, _ = bls.Pair([]bls.G1Affine{sigma.bTau}, []bls.G2Affine{w.pp.wTau})
+	lhs, _ = bls.Pair([]bls.G1Affine{w.pp.wTau}, []bls.G2Affine{b2Tau})
 	rhs, _ = bls.Pair([]bls.G1Affine{pfW.qTau, pfW.qrTau, gThs}, []bls.G2Affine{w.crs.vHTau, w.crs.g2Tau, gNInv})
 
 	// 2 Checking aggP, i.e., s(tau)b(tau) = q(tau)z(tau) + tau q_r(tau) + aggPk/n
-	var b2Tau bls.G2Affine
-	b2Tau.Sub(&w.crs.g2a, &sigma.bNegTau)
+
 	lhs, _ = bls.Pair([]bls.G1Affine{w.pp.pComm}, []bls.G2Affine{b2Tau})
 	rhs, _ = bls.Pair([]bls.G1Affine{pfP.qTau, pfP.qrTau, sigma.aggPk}, []bls.G2Affine{w.crs.vHTau, w.crs.g2Tau, gNInv})
 	res = res && lhs.Equal(&rhs)

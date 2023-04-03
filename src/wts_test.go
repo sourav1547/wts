@@ -140,7 +140,8 @@ func BenchmarkGenCRS(b *testing.B) {
 
 	b.ResetTimer()
 	crs := GenCRS(n)
-	NewWTS(n, weights, crs)
+	w := NewWTS(n, weights, crs)
+	w.preProcess()
 }
 
 func TestPreProcess(t *testing.T) {
@@ -152,6 +153,7 @@ func TestPreProcess(t *testing.T) {
 
 	crs := GenCRS(n)
 	w := NewWTS(n, weights, crs)
+	w.preProcess()
 
 	// tau^n-1
 	var zTau fr.Element
@@ -179,6 +181,7 @@ func TestBin(t *testing.T) {
 
 	crs := GenCRS(n)
 	w := NewWTS(n, weights, crs)
+	w.preProcess()
 
 	var bTau bls.G1Affine
 	var bNegTau bls.G2Affine
@@ -194,6 +197,7 @@ func TestBin(t *testing.T) {
 			ths += weights[i]
 		}
 	}
+	bTauG2 := bNegTau
 	bNegTau.Sub(&crs.g2a, &bNegTau)
 	qTau := w.binaryPf(signers)
 	fmt.Println("Signers ", len(signers), "Threshold", ths)
@@ -218,7 +222,7 @@ func TestBin(t *testing.T) {
 	gThs.ScalarMultiplication(&w.crs.g1a, big.NewInt(int64(ths)))
 	gThs.ScalarMultiplication(&gThs, nInv.BigInt(&big.Int{}))
 
-	lhs, _ = bls.Pair([]bls.G1Affine{bTau}, []bls.G2Affine{w.pp.wTau})
+	lhs, _ = bls.Pair([]bls.G1Affine{w.pp.wTau}, []bls.G2Affine{bTauG2})
 	rhs, _ = bls.Pair([]bls.G1Affine{qwTau, qrwTau, gThs}, []bls.G2Affine{w.crs.vHTau, w.crs.g2Tau, w.crs.g2a})
 	assert.Equal(t, lhs.Equal(&rhs), true, "Proving weights!")
 }
@@ -235,6 +239,7 @@ func TestWTSPSign(t *testing.T) {
 
 	crs := GenCRS(n)
 	w := NewWTS(n, weights, crs)
+	w.preProcess()
 
 	var signers []int
 	var sigmas []bls.G2Jac
