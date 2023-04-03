@@ -13,7 +13,6 @@ import (
 type Party struct {
 	weight  int
 	sKey    fr.Element
-	pKey    bls.G1Jac
 	pKeyAff bls.G1Affine
 }
 
@@ -75,22 +74,23 @@ type WTS struct {
 
 func GenCRS(n int) CRS {
 	var (
-		g1InvAff bls.G1Affine
-		tau      fr.Element
-		g2Tau    bls.G2Affine
+		tau   fr.Element
+		g2Tau bls.G2Affine
 	)
 
 	g1, g2, g1a, g2a := bls.Generators()
-	g1InvAff.ScalarMultiplication(&g1a, big.NewInt(int64(-1)))
+	var g1Inv bls.G1Affine
+	g1Inv.FromJacobian(new(bls.G1Jac).Neg(&g1))
 
 	tau.SetRandom()
-	g2Tau.ScalarMultiplication(&g2a, tau.BigInt(&big.Int{}))
+	g2Tau.FromJacobian(new(bls.G2Jac).ScalarMultiplication(&g2, tau.BigInt(&big.Int{})))
 
 	domain := fft.NewDomain(uint64(n))
 	omH := domain.Generator
 	H := make([]fr.Element, n)
-	for i := 0; i < n; i++ {
-		H[i].Exp(omH, big.NewInt(int64(i)))
+	H[0].SetOne()
+	for i := 1; i < n; i++ {
+		H[i].Mul(&omH, &H[i-1])
 	}
 
 	var coset, coExp fr.Element
@@ -119,7 +119,7 @@ func GenCRS(n int) CRS {
 	var tauN fr.Element
 	tauN.Exp(tau, big.NewInt(int64(n)))
 	tauN.Sub(&tauN, &one)
-	vHTau.ScalarMultiplication(&g2a, tauN.BigInt(&big.Int{}))
+	vHTau.FromJacobian((new(bls.G2Jac).ScalarMultiplication(&g2, tauN.BigInt(&big.Int{}))))
 
 	// Computing Lagrange in the exponent
 	lagH := GetLagAt(tau, H)
@@ -144,7 +144,7 @@ func GenCRS(n int) CRS {
 		g2:        g2,
 		g1a:       g1a,
 		g2a:       g2a,
-		g1InvAff:  g1InvAff,
+		g1InvAff:  g1Inv,
 		domain:    domain,
 		H:         H,
 		L:         L,
@@ -172,49 +172,42 @@ func NewWTS(n int, weights []int, crs CRS) WTS {
 
 func (w *WTS) keyGen() {
 	parties := make([]Party, w.n)
-	pKeys := make([]bls.G1Affine, w.n)
 	sKeys := make([]fr.Element, w.n)
 
-	var (
-		sk  fr.Element
-		pk  bls.G1Jac
-		pka bls.G1Affine
-	)
 	for i := 0; i < w.n; i++ {
-		sk.SetRandom()
-		pka.ScalarMultiplication(&w.crs.g1a, sk.BigInt(&big.Int{}))
-		pk.FromAffine(&pka)
-		pKeys[i] = pka
-		sKeys[i] = sk
+		sKeys[i].SetRandom()
+	}
+	pKeys := bls.BatchScalarMultiplicationG1(&w.crs.g1a, sKeys)
 
+	for i := 0; i < w.n; i++ {
 		parties[i] = Party{
 			weight:  w.weights[i],
-			sKey:    sk,
-			pKey:    pk,
-			pKeyAff: pka,
+			sKey:    sKeys[i],
+			pKeyAff: pKeys[i],
 		}
-
 	}
 
 	aTaus := bls.BatchScalarMultiplicationG1(&w.crs.gAlpha, sKeys)
-	hTaus := make([]bls.G1Affine, w.n)
 	lTaus := make([][]bls.G1Affine, w.n)
+	hTaus := make([]bls.G1Jac, w.n)
 
-	var pComm bls.G1Affine
+	var pCommJac, lagHTau bls.G1Jac
 	for i := 0; i < w.n; i++ {
-		hTaus[i].ScalarMultiplication(&w.crs.lagHTaus[i], sKeys[i].BigInt(&big.Int{}))
-		pComm.Add(&pComm, &hTaus[i])
+		lagHTau.FromAffine(&w.crs.lagHTaus[i])
+		hTaus[i].ScalarMultiplication(&lagHTau, sKeys[i].BigInt(&big.Int{}))
+		pCommJac.AddAssign(&hTaus[i])
+	}
+	var pComm bls.G1Affine
+	pComm.FromJacobian(&pCommJac)
 
-		lTaus[i] = make([]bls.G1Affine, w.n-1)
-		for ii := 0; ii < w.n-1; ii++ {
-			lTaus[i][ii].ScalarMultiplication(&w.crs.lagLTaus[ii], sKeys[i].BigInt(&big.Int{}))
-		}
+	for ii := 0; ii < w.n-1; ii++ {
+		lTaus[ii] = bls.BatchScalarMultiplicationG1(&w.crs.lagLTaus[ii], sKeys)
 	}
 
 	w.pp = Params{
 		pKeys: pKeys,
 		pComm: pComm,
-		hTaus: hTaus,
+		hTaus: bls.BatchJacobianToAffineG1(hTaus),
 		lTaus: lTaus,
 		aTaus: aTaus,
 	}
@@ -238,7 +231,7 @@ func (w *WTS) preProcess() {
 	for l := 0; l < w.n-1; l++ {
 		bases := make([]bls.G1Affine, w.n)
 		for i := 0; i < w.n; i++ {
-			bases[i] = w.pp.lTaus[i][l]
+			bases[i] = w.pp.lTaus[l][i]
 		}
 		lagLs[l].MultiExp(bases, lagLH[l], ecc.MultiExpConfig{})
 	}
@@ -249,7 +242,7 @@ func (w *WTS) preProcess() {
 
 	for i := 0; i < w.n; i++ {
 		for l := 0; l < w.n-1; l++ {
-			bases[l].Sub(&lagLs[l], &w.pp.lTaus[i][l])
+			bases[l].Sub(&lagLs[l], &w.pp.lTaus[l][i])
 			exps[l].Div(&lagLH[l][i], &zHL[l])
 		}
 		qTaus[i].MultiExp(bases, exps, ecc.MultiExpConfig{})
