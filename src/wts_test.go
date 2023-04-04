@@ -265,7 +265,7 @@ func TestWTSPSign(t *testing.T) {
 
 func BenchmarkCombine(b *testing.B) {
 	msg := []byte("hello world")
-	n := 1 << 10
+	n := 1 << 12
 	weights := make([]int, n)
 	for i := 0; i < n; i++ {
 		weights[i] = i

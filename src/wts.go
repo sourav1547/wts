@@ -42,7 +42,7 @@ type CRS struct {
 	H         []fr.Element
 	L         []fr.Element
 	lagLH     [][]fr.Element
-	zHL       []fr.Element
+	zHLInv    fr.Element
 	g2Tau     bls.G2Affine
 	vHTau     bls.G2Affine
 	PoT       []bls.G1Affine
@@ -88,15 +88,19 @@ func GenCRS(n int) CRS {
 		H[i].Mul(&omH, &H[i-1])
 	}
 
-	var coset, coExp fr.Element
+	// OPT: Can we work with a better coset?
 	one := fr.One()
+	var coset, coExp fr.Element
 	for i := 2; i < n+2; i++ {
 		coset = fr.NewElement(uint64(i))
 		coExp.Exp(coset, big.NewInt(int64(n)))
-		if coExp.Equal(&one) {
+		if !coExp.Equal(&one) {
 			break
 		}
 	}
+	coExp.Sub(&coExp, &one)
+	coExp.Inverse(&coExp)
+
 	L := make([]fr.Element, n-1)
 	for i := 0; i < n-1; i++ {
 		L[i].Mul(&coset, &H[i])
@@ -116,8 +120,9 @@ func GenCRS(n int) CRS {
 	vHTau := new(bls.G2Jac).ScalarMultiplication(&g2, tauN.BigInt(&big.Int{}))
 
 	// Computing Lagrange in the exponent
+	// OPT: Current implementation of GetLagAt is quadratic, we can make it O(nlogn)
 	lagH := GetLagAt(tau, H)
-	lagL := GetLagAt(tau, L)
+	lagL := GetLagAt(tau, L) // OPT: Can we reuse the denominators from GetLag(tau,H)?
 	lagHTaus := bls.BatchScalarMultiplicationG1(&g1a, lagH)
 	lag2HTaus := bls.BatchScalarMultiplicationG2(&g2a, lagH)
 	lagLTaus := bls.BatchScalarMultiplicationG1(&g1a, lagL)
@@ -129,12 +134,10 @@ func GenCRS(n int) CRS {
 	}
 	gAlpha := new(bls.G1Jac).ScalarMultiplication(&g1, alpha.BigInt(&big.Int{}))
 
+	// TODO: Must optimize this
 	lagLH := make([][]fr.Element, n-1)
-	zHL := make([]fr.Element, n-1)
 	for l := 0; l < n-1; l++ {
 		lagLH[l] = GetLagAt(L[l], H)
-		zHL[l].Exp(L[l], big.NewInt(int64(n)))
-		zHL[l].Sub(&zHL[l], &one)
 	}
 
 	return CRS{
@@ -147,7 +150,7 @@ func GenCRS(n int) CRS {
 		H:         H,
 		L:         L,
 		lagLH:     lagLH,
-		zHL:       zHL,
+		zHLInv:    coExp,
 		tau:       tau,
 		g2Tau:     *new(bls.G2Affine).FromJacobian(g2Tau),
 		vHTau:     *new(bls.G2Affine).FromJacobian(vHTau),
@@ -197,6 +200,7 @@ func (w *WTS) keyGen() {
 		pComm.AddAssign(&hTaus[i])
 	}
 
+	// OPT: Can we optimize this?
 	for ii := 0; ii < w.n-1; ii++ {
 		lTaus[ii] = bls.BatchScalarMultiplicationG1(&w.crs.lagLTaus[ii], sKeys)
 	}
@@ -213,6 +217,7 @@ func (w *WTS) keyGen() {
 
 // Compute
 func (w *WTS) preProcess() {
+	// OPT: Can we optimize this?
 	lagLs := make([]bls.G1Jac, w.n-1)
 	for l := 0; l < w.n-1; l++ {
 		lagLs[l].MultiExp(w.pp.lTaus[l], w.crs.lagLH[l], ecc.MultiExpConfig{})
@@ -228,7 +233,7 @@ func (w *WTS) preProcess() {
 			lTau.FromAffine(&w.pp.lTaus[l][i])
 			bases[l] = lagLs[l]
 			bases[l].SubAssign(&lTau)
-			exps[l].Div(&w.crs.lagLH[l][i], &w.crs.zHL[l]) // Can also be pushed to Setup
+			exps[l].Mul(&w.crs.lagLH[l][i], &w.crs.zHLInv) // Can also be pushed to Setup
 		}
 		qTaus[i].MultiExp(bls.BatchJacobianToAffineG1(bases), exps, ecc.MultiExpConfig{})
 	}
@@ -335,12 +340,9 @@ func (w *WTS) pverify(roMsg bls.G2Affine, sigma bls.G2Jac, vk bls.G1Affine) bool
 
 // The combine function
 func (w *WTS) combine(signers []int, sigmas []bls.G2Jac) Sig {
-	var (
-		bTau  bls.G1Jac
-		b2Tau bls.G2Jac
-		qTau  bls.G1Jac
-		aggPk bls.G1Jac
-	)
+	var bTau, qTau, aggPk bls.G1Jac
+	var b2Tau bls.G2Jac
+
 	weight := 0
 	for _, idx := range signers {
 		bTau.AddMixed(&w.crs.lagHTaus[idx])
@@ -359,6 +361,8 @@ func (w *WTS) combine(signers []int, sigmas []bls.G2Jac) Sig {
 	expts := make([]fr.Element, t)
 
 	// Computing the second term
+	// OPT: Can possibly optimize this
+	// OPT: Can also send the indices of the signers while computing lagH0
 	lagH0 := GetLagAt(fr.NewElement(uint64(0)), w.crs.H)
 	for i, idx := range signers {
 		expts[i] = lagH0[idx]
