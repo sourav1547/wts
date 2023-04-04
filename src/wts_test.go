@@ -107,7 +107,7 @@ func TestKeyGen(t *testing.T) {
 		for l := 0; l < n-1; l++ {
 			skLl.Mul(&w.signers[i].sKey, &lagL[l])
 			lTauL.ScalarMultiplication(&w.crs.g1a, skLl.BigInt(&big.Int{}))
-			assert.Equal(t, lTauL.Equal(&w.pp.lTaus[i][l]), true)
+			assert.Equal(t, lTauL.Equal(&w.pp.lTaus[l][i]), true)
 		}
 	}
 }
@@ -132,16 +132,18 @@ func BenchmarkCComp2(b *testing.B) {
 }
 
 func BenchmarkGenCRS(b *testing.B) {
-	n := 1 << 8
+	n := 1 << 10
 	weights := make([]int, n)
 	for i := 0; i < n; i++ {
 		weights[i] = i
 	}
 
-	b.ResetTimer()
 	crs := GenCRS(n)
 	w := NewWTS(n, weights, crs)
-	w.preProcess()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		w.preProcess()
+	}
 }
 
 func TestPreProcess(t *testing.T) {
@@ -231,7 +233,7 @@ func TestWTSPSign(t *testing.T) {
 	msg := []byte("hello world")
 	roMsg, _ := bls.HashToG2(msg, []byte{})
 
-	n := 1 << 4
+	n := 1 << 5
 	weights := make([]int, n)
 	for i := 0; i < n; i++ {
 		weights[i] = i
@@ -259,4 +261,33 @@ func TestWTSPSign(t *testing.T) {
 
 	sig := w.combine(signers, sigmas)
 	assert.Equal(t, w.gverify(msg, sig, ths), true)
+}
+
+func BenchmarkCombine(b *testing.B) {
+	msg := []byte("hello world")
+	n := 1 << 10
+	weights := make([]int, n)
+	for i := 0; i < n; i++ {
+		weights[i] = i
+	}
+
+	crs := GenCRS(n)
+	w := NewWTS(n, weights, crs)
+	w.preProcess()
+
+	var signers []int
+	var sigmas []bls.G2Jac
+	ths := 0
+	for i := 0; i < n; i++ {
+		if rand.Intn(2) == 1 {
+			signers = append(signers, i)
+			sigmas = append(sigmas, w.psign(msg, w.signers[i]))
+			ths += weights[i]
+		}
+	}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		w.combine(signers, sigmas)
+	}
 }

@@ -38,17 +38,21 @@ type CRS struct {
 	g2a      bls.G2Affine
 	g1InvAff bls.G1Affine
 	// Lagrange polynomials
-	tau       fr.Element // FIXME: To remove, only added for testing purposes
-	domain    *fft.Domain
-	H         []fr.Element
-	L         []fr.Element
-	g2Tau     bls.G2Affine
-	vHTau     bls.G2Affine
-	PoT       []bls.G1Affine
-	lagHTaus  []bls.G1Affine // [Lag_i(tau)]
-	lag2HTaus []bls.G2Affine // [g2^Lag_i(tau)]
-	lagLTaus  []bls.G1Affine // [Lag_l(tau)]
-	gAlpha    bls.G1Affine   // h_alpha
+	tau        fr.Element // FIXME: To remove, only added for testing purposes
+	domain     *fft.Domain
+	H          []fr.Element
+	L          []fr.Element
+	lagLH      [][]fr.Element
+	zHL        []fr.Element
+	g2Tau      bls.G2Affine
+	vHTau      bls.G2Affine
+	PoT        []bls.G1Affine
+	lagHTaus   []bls.G1Affine // [Lag_i(tau)]
+	lagHTausJ  []bls.G1Jac    // [Lag_i(tau)]
+	lag2HTaus  []bls.G2Affine // [g2^Lag_i(tau)]
+	lag2HTausJ []bls.G2Jac    // [g2^Lag_i(tau)]
+	lagLTaus   []bls.G1Affine // [Lag_l(tau)]
+	gAlpha     bls.G1Affine   // h_alpha
 }
 
 type Params struct {
@@ -128,6 +132,14 @@ func GenCRS(n int) CRS {
 	lag2HTaus := bls.BatchScalarMultiplicationG2(&g2a, lagH)
 	lagLTaus := bls.BatchScalarMultiplicationG1(&g1a, lagL)
 
+	lagHTausJ := make([]bls.G1Jac, n)
+	lag2HTausJ := make([]bls.G2Jac, n)
+
+	for i := 0; i < n; i++ {
+		lagHTausJ[i].FromAffine(&lagHTaus[i])
+		lag2HTausJ[i].FromAffine(&lag2HTaus[i])
+	}
+
 	// Computing g^alpha
 	var (
 		alpha  fr.Element
@@ -139,23 +151,37 @@ func GenCRS(n int) CRS {
 	}
 	gAlpha.ScalarMultiplication(&g1a, alpha.BigInt(&big.Int{}))
 
+	lagLH := make([][]fr.Element, n-1)
+	zHL := make([]fr.Element, n-1)
+	one.SetOne()
+
+	for l := 0; l < n-1; l++ {
+		lagLH[l] = GetLagAt(L[l], H)
+		zHL[l].Exp(L[l], big.NewInt(int64(n)))
+		zHL[l].Sub(&zHL[l], &one)
+	}
+
 	return CRS{
-		g1:        g1,
-		g2:        g2,
-		g1a:       g1a,
-		g2a:       g2a,
-		g1InvAff:  g1Inv,
-		domain:    domain,
-		H:         H,
-		L:         L,
-		tau:       tau,
-		g2Tau:     g2Tau,
-		vHTau:     vHTau,
-		PoT:       PoT,
-		lagHTaus:  lagHTaus,
-		lag2HTaus: lag2HTaus,
-		lagLTaus:  lagLTaus,
-		gAlpha:    gAlpha,
+		g1:         g1,
+		g2:         g2,
+		g1a:        g1a,
+		g2a:        g2a,
+		g1InvAff:   g1Inv,
+		domain:     domain,
+		H:          H,
+		L:          L,
+		lagLH:      lagLH,
+		zHL:        zHL,
+		tau:        tau,
+		g2Tau:      g2Tau,
+		vHTau:      vHTau,
+		PoT:        PoT,
+		lagHTaus:   lagHTaus,
+		lagHTausJ:  lagHTausJ,
+		lag2HTaus:  lag2HTaus,
+		lag2HTausJ: lag2HTausJ,
+		lagLTaus:   lagLTaus,
+		gAlpha:     gAlpha,
 	}
 }
 
@@ -215,33 +241,24 @@ func (w *WTS) keyGen() {
 
 // Compute
 func (w *WTS) preProcess() {
-	lagLH := make([][]fr.Element, w.n-1)
-	zHL := make([]fr.Element, w.n-1)
-	one := fr.One()
-
-	// Can be be made part of Setup
+	lagLs := make([]bls.G1Jac, w.n-1)
 	for l := 0; l < w.n-1; l++ {
-		lagLH[l] = GetLagAt(w.crs.L[l], w.crs.H)
-		zHL[l].Exp(w.crs.L[l], big.NewInt(int64(w.n)))
-		zHL[l].Sub(&zHL[l], &one)
+		lagLs[l].MultiExp(w.pp.lTaus[l], w.crs.lagLH[l], ecc.MultiExpConfig{})
 	}
 
-	lagLsJac := make([]bls.G1Jac, w.n-1)
-	for l := 0; l < w.n-1; l++ {
-		lagLsJac[l].MultiExp(w.pp.lTaus[l], lagLH[l], ecc.MultiExpConfig{})
-	}
-	lagLs := bls.BatchJacobianToAffineG1(lagLsJac)
-
+	var lTau bls.G1Jac
 	qTaus := make([]bls.G1Jac, w.n)
-	bases := make([]bls.G1Affine, w.n-1)
 	exps := make([]fr.Element, w.n-1)
+	bases := make([]bls.G1Jac, w.n-1)
 
 	for i := 0; i < w.n; i++ {
 		for l := 0; l < w.n-1; l++ {
-			bases[l].Sub(&lagLs[l], &w.pp.lTaus[l][i])
-			exps[l].Div(&lagLH[l][i], &zHL[l]) // Can also be pushed to Setup
+			lTau.FromAffine(&w.pp.lTaus[l][i])
+			bases[l] = lagLs[l]
+			bases[l].SubAssign(&lTau)
+			exps[l].Div(&w.crs.lagLH[l][i], &w.crs.zHL[l]) // Can also be pushed to Setup
 		}
-		qTaus[i].MultiExp(bases, exps, ecc.MultiExpConfig{})
+		qTaus[i].MultiExp(bls.BatchJacobianToAffineG1(bases), exps, ecc.MultiExpConfig{})
 	}
 	w.pp.qTaus = bls.BatchJacobianToAffineG1(qTaus)
 
@@ -384,6 +401,8 @@ func (w *WTS) pverify(roMsg bls.G2Affine, sigma bls.G2Jac, vk bls.G1Affine) bool
 // The combine function
 func (w *WTS) combine(signers []int, sigmas []bls.G2Jac) Sig {
 	var (
+		// bTau  bls.G1Jac
+		// b2Tau bls.G2Jac
 		bTau    bls.G1Affine
 		bNegTau bls.G2Affine
 		qTau    bls.G1Affine
@@ -401,27 +420,33 @@ func (w *WTS) combine(signers []int, sigmas []bls.G2Jac) Sig {
 
 	// Compute qrTau and checking its correctness
 	var (
-		qrTau1 bls.G1Affine
-		qrTau2 bls.G1Affine
-		qrTau  bls.G1Affine
+		qrTau2   bls.G1Jac
+		qrTau    bls.G1Jac
+		qrTauAff bls.G1Affine
 	)
+
+	t := len(signers)
+	bases := make([]bls.G1Affine, t)
+	expts := make([]fr.Element, t)
 
 	// Computing the second term
 	lagH0 := GetLagAt(fr.NewElement(uint64(0)), w.crs.H)
-	var temp bls.G1Affine
-	for _, idx := range signers {
-		temp.ScalarMultiplication(&w.pp.aTaus[idx], lagH0[idx].BigInt(&big.Int{}))
-		qrTau2.Add(&qrTau2, &temp)
+	for i, idx := range signers {
+		expts[i] = lagH0[idx]
+		bases[i] = w.pp.aTaus[idx]
 	}
+	qrTau2.MultiExp(bases, expts, ecc.MultiExpConfig{})
 
 	// Computing the first term
-	var omHIInv fr.Element
-	for _, idx := range signers {
-		omHIInv.Inverse(&w.crs.H[idx])
-		temp.ScalarMultiplication(&w.pp.hTaus[idx], omHIInv.BigInt(&big.Int{}))
-		qrTau1.Add(&qrTau1, &temp)
+	for i, idx := range signers {
+		expts[i].Inverse(&w.crs.H[idx])
+		bases[i] = w.pp.hTaus[idx]
 	}
-	qrTau.Sub(&qrTau1, &qrTau2)
+	qrTau.MultiExp(bases, expts, ecc.MultiExpConfig{})
+
+	// first term - second term
+	qrTau.SubAssign(&qrTau2)
+	qrTauAff.FromJacobian(&qrTau)
 
 	// Aggregating the signature
 	var aggSig bls.G2Jac
@@ -431,7 +456,7 @@ func (w *WTS) combine(signers []int, sigmas []bls.G2Jac) Sig {
 
 	pfP := IPAProof{
 		qTau:  qTau,
-		qrTau: qrTau,
+		qrTau: qrTauAff,
 	}
 
 	pfB := IPAProof{
