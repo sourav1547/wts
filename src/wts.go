@@ -1,7 +1,6 @@
 package wts
 
 import (
-	"fmt"
 	"math/big"
 
 	"github.com/consensys/gnark-crypto/ecc"
@@ -38,21 +37,19 @@ type CRS struct {
 	g2a      bls.G2Affine
 	g1InvAff bls.G1Affine
 	// Lagrange polynomials
-	tau        fr.Element // FIXME: To remove, only added for testing purposes
-	domain     *fft.Domain
-	H          []fr.Element
-	L          []fr.Element
-	lagLH      [][]fr.Element
-	zHL        []fr.Element
-	g2Tau      bls.G2Affine
-	vHTau      bls.G2Affine
-	PoT        []bls.G1Affine
-	lagHTaus   []bls.G1Affine // [Lag_i(tau)]
-	lagHTausJ  []bls.G1Jac    // [Lag_i(tau)]
-	lag2HTaus  []bls.G2Affine // [g2^Lag_i(tau)]
-	lag2HTausJ []bls.G2Jac    // [g2^Lag_i(tau)]
-	lagLTaus   []bls.G1Affine // [Lag_l(tau)]
-	gAlpha     bls.G1Affine   // h_alpha
+	tau       fr.Element // FIXME: To remove, only added for testing purposes
+	domain    *fft.Domain
+	H         []fr.Element
+	L         []fr.Element
+	lagLH     [][]fr.Element
+	zHL       []fr.Element
+	g2Tau     bls.G2Affine
+	vHTau     bls.G2Affine
+	PoT       []bls.G1Affine
+	lagHTaus  []bls.G1Affine // [Lag_i(tau)]
+	lag2HTaus []bls.G2Affine // [g2^Lag_i(tau)]
+	lagLTaus  []bls.G1Affine // [Lag_l(tau)]
+	gAlpha    bls.G1Affine   // h_alpha
 }
 
 type Params struct {
@@ -77,17 +74,11 @@ type WTS struct {
 }
 
 func GenCRS(n int) CRS {
-	var (
-		tau   fr.Element
-		g2Tau bls.G2Affine
-	)
-
 	g1, g2, g1a, g2a := bls.Generators()
-	var g1Inv bls.G1Affine
-	g1Inv.FromJacobian(new(bls.G1Jac).Neg(&g1))
 
+	var tau fr.Element
 	tau.SetRandom()
-	g2Tau.FromJacobian(new(bls.G2Jac).ScalarMultiplication(&g2, tau.BigInt(&big.Int{})))
+	g2Tau := new(bls.G2Jac).ScalarMultiplication(&g2, tau.BigInt(&big.Int{}))
 
 	domain := fft.NewDomain(uint64(n))
 	omH := domain.Generator
@@ -119,11 +110,10 @@ func GenCRS(n int) CRS {
 	PoT := bls.BatchScalarMultiplicationG1(&g1a, poT)
 
 	// Computing vHTau
-	var vHTau bls.G2Affine
 	var tauN fr.Element
 	tauN.Exp(tau, big.NewInt(int64(n)))
 	tauN.Sub(&tauN, &one)
-	vHTau.FromJacobian((new(bls.G2Jac).ScalarMultiplication(&g2, tauN.BigInt(&big.Int{}))))
+	vHTau := new(bls.G2Jac).ScalarMultiplication(&g2, tauN.BigInt(&big.Int{}))
 
 	// Computing Lagrange in the exponent
 	lagH := GetLagAt(tau, H)
@@ -132,29 +122,15 @@ func GenCRS(n int) CRS {
 	lag2HTaus := bls.BatchScalarMultiplicationG2(&g2a, lagH)
 	lagLTaus := bls.BatchScalarMultiplicationG1(&g1a, lagL)
 
-	lagHTausJ := make([]bls.G1Jac, n)
-	lag2HTausJ := make([]bls.G2Jac, n)
-
-	for i := 0; i < n; i++ {
-		lagHTausJ[i].FromAffine(&lagHTaus[i])
-		lag2HTausJ[i].FromAffine(&lag2HTaus[i])
-	}
-
 	// Computing g^alpha
-	var (
-		alpha  fr.Element
-		div    fr.Element
-		gAlpha bls.G1Affine
-	)
+	var alpha, div fr.Element
 	for i := 0; i < n; i++ {
 		alpha.Add(&alpha, div.Div(&lagH[i], &H[i]))
 	}
-	gAlpha.ScalarMultiplication(&g1a, alpha.BigInt(&big.Int{}))
+	gAlpha := new(bls.G1Jac).ScalarMultiplication(&g1, alpha.BigInt(&big.Int{}))
 
 	lagLH := make([][]fr.Element, n-1)
 	zHL := make([]fr.Element, n-1)
-	one.SetOne()
-
 	for l := 0; l < n-1; l++ {
 		lagLH[l] = GetLagAt(L[l], H)
 		zHL[l].Exp(L[l], big.NewInt(int64(n)))
@@ -162,26 +138,24 @@ func GenCRS(n int) CRS {
 	}
 
 	return CRS{
-		g1:         g1,
-		g2:         g2,
-		g1a:        g1a,
-		g2a:        g2a,
-		g1InvAff:   g1Inv,
-		domain:     domain,
-		H:          H,
-		L:          L,
-		lagLH:      lagLH,
-		zHL:        zHL,
-		tau:        tau,
-		g2Tau:      g2Tau,
-		vHTau:      vHTau,
-		PoT:        PoT,
-		lagHTaus:   lagHTaus,
-		lagHTausJ:  lagHTausJ,
-		lag2HTaus:  lag2HTaus,
-		lag2HTausJ: lag2HTausJ,
-		lagLTaus:   lagLTaus,
-		gAlpha:     gAlpha,
+		g1:        g1,
+		g2:        g2,
+		g1a:       g1a,
+		g2a:       g2a,
+		g1InvAff:  *new(bls.G1Affine).FromJacobian(new(bls.G1Jac).Neg(&g1)),
+		domain:    domain,
+		H:         H,
+		L:         L,
+		lagLH:     lagLH,
+		zHL:       zHL,
+		tau:       tau,
+		g2Tau:     *new(bls.G2Affine).FromJacobian(g2Tau),
+		vHTau:     *new(bls.G2Affine).FromJacobian(vHTau),
+		PoT:       PoT,
+		lagHTaus:  lagHTaus,
+		lag2HTaus: lag2HTaus,
+		lagLTaus:  lagLTaus,
+		gAlpha:    *new(bls.G1Affine).FromJacobian(gAlpha),
 	}
 }
 
@@ -216,14 +190,12 @@ func (w *WTS) keyGen() {
 	lTaus := make([][]bls.G1Affine, w.n)
 	hTaus := make([]bls.G1Jac, w.n)
 
-	var pCommJac, lagHTau bls.G1Jac
+	var pComm, lagHTau bls.G1Jac
 	for i := 0; i < w.n; i++ {
 		lagHTau.FromAffine(&w.crs.lagHTaus[i])
 		hTaus[i].ScalarMultiplication(&lagHTau, sKeys[i].BigInt(&big.Int{}))
-		pCommJac.AddAssign(&hTaus[i])
+		pComm.AddAssign(&hTaus[i])
 	}
-	var pComm bls.G1Affine
-	pComm.FromJacobian(&pCommJac)
 
 	for ii := 0; ii < w.n-1; ii++ {
 		lTaus[ii] = bls.BatchScalarMultiplicationG1(&w.crs.lagLTaus[ii], sKeys)
@@ -231,7 +203,7 @@ func (w *WTS) keyGen() {
 
 	w.pp = Params{
 		pKeys: pKeys,
-		pComm: pComm,
+		pComm: *new(bls.G1Affine).FromJacobian(&pComm),
 		hTaus: bls.BatchJacobianToAffineG1(hTaus),
 		lTaus: lTaus,
 		aTaus: aTaus,
@@ -268,12 +240,8 @@ func (w *WTS) preProcess() {
 		weightsF[i] = fr.NewElement(uint64(w.weights[i]))
 	}
 
-	var wTau bls.G1Jac
-	var wTauAf bls.G1Affine
-	wTau.MultiExp(w.crs.lagHTaus, weightsF, ecc.MultiExpConfig{})
-	wTauAf.FromJacobian(&wTau)
-
-	w.pp.wTau = wTauAf
+	wTau, _ := new(bls.G1Jac).MultiExp(w.crs.lagHTaus, weightsF, ecc.MultiExpConfig{})
+	w.pp.wTau = *new(bls.G1Affine).FromJacobian(wTau)
 }
 
 func (w *WTS) weightsPf(signers []int) (bls.G1Affine, bls.G1Affine) {
@@ -288,11 +256,6 @@ func (w *WTS) weightsPf(signers []int) (bls.G1Affine, bls.G1Affine) {
 		bF[idx] = fr.One()
 		rF[idx] = wF[idx]
 	}
-
-	var rTau bls.G1Jac
-	var rTauAf bls.G1Affine
-	rTau.MultiExp(w.crs.lagHTaus, rF, ecc.MultiExpConfig{})
-	rTauAf.FromJacobian(&rTau)
 
 	w.crs.domain.FFTInverse(bF, fft.DIF)
 	w.crs.domain.FFTInverse(wF, fft.DIF)
@@ -317,16 +280,10 @@ func (w *WTS) weightsPf(signers []int) (bls.G1Affine, bls.G1Affine) {
 	fft.BitReverse(bF)
 	fft.BitReverse(rF)
 
-	var qTau, qrTau bls.G1Jac
-	var qTauAf, qrTauAf bls.G1Affine
+	qTau, _ := new(bls.G1Jac).MultiExp(w.crs.PoT, bF, ecc.MultiExpConfig{})
+	qrTau, _ := new(bls.G1Jac).MultiExp(w.crs.PoT[:w.n-1], rF[1:], ecc.MultiExpConfig{})
 
-	qTau.MultiExp(w.crs.PoT, bF, ecc.MultiExpConfig{})
-	qrTau.MultiExp(w.crs.PoT[:w.n-1], rF[1:], ecc.MultiExpConfig{})
-
-	qTauAf.FromJacobian(&qTau)
-	qrTauAf.FromJacobian(&qrTau)
-
-	return qTauAf, qrTauAf
+	return *new(bls.G1Affine).FromJacobian(qTau), *new(bls.G1Affine).FromJacobian(qrTau)
 }
 
 func (w *WTS) binaryPf(signers []int) bls.G1Affine {
@@ -359,72 +316,44 @@ func (w *WTS) binaryPf(signers []int) bls.G1Affine {
 	w.crs.domain.FFTInverse(bF, fft.DIF, true)
 	fft.BitReverse(bF)
 
-	var (
-		qTau   bls.G1Jac
-		qTauAf bls.G1Affine
-	)
-	qTau.MultiExp(w.crs.PoT, bF, ecc.MultiExpConfig{})
-	qTauAf.FromJacobian(&qTau)
-
-	return qTauAf
+	qTau, _ := new(bls.G1Jac).MultiExp(w.crs.PoT, bF, ecc.MultiExpConfig{})
+	return *new(bls.G1Affine).FromJacobian(qTau)
 }
 
 // Takes the singing party and signs the message
 func (w *WTS) psign(msg Message, signer Party) bls.G2Jac {
-	var (
-		dst      []byte
-		sigma    bls.G2Jac
-		roMsgJac bls.G2Jac
-	)
-	roMsg, _ := bls.HashToG2(msg, dst)
-	roMsgJac.FromAffine(&roMsg)
+	roMsg, _ := bls.HashToG2(msg, []byte{})
 
-	sigma.ScalarMultiplication(&roMsgJac, signer.sKey.BigInt(&big.Int{}))
-	return sigma
+	return *new(bls.G2Jac).ScalarMultiplication(new(bls.G2Jac).FromAffine(&roMsg), signer.sKey.BigInt(&big.Int{}))
 }
 
 // Takes the signing key and signs the message
 func (w *WTS) pverify(roMsg bls.G2Affine, sigma bls.G2Jac, vk bls.G1Affine) bool {
-	var sigmaAff bls.G2Affine
-	sigmaAff.FromJacobian(&sigma)
-
-	P := []bls.G1Affine{vk, w.crs.g1InvAff}
-	Q := []bls.G2Affine{roMsg, sigmaAff}
-
-	res, err := bls.PairingCheck(P, Q)
-	if err != nil {
-		fmt.Println("Panic mts verification failed")
-	}
+	res, _ := bls.PairingCheck([]bls.G1Affine{vk, w.crs.g1InvAff}, []bls.G2Affine{roMsg, *new(bls.G2Affine).FromJacobian(&sigma)})
 	return res
 }
 
 // The combine function
 func (w *WTS) combine(signers []int, sigmas []bls.G2Jac) Sig {
 	var (
-		// bTau  bls.G1Jac
-		// b2Tau bls.G2Jac
-		bTau    bls.G1Affine
-		bNegTau bls.G2Affine
-		qTau    bls.G1Affine
-		aggPk   bls.G1Affine
+		bTau  bls.G1Jac
+		b2Tau bls.G2Jac
+		qTau  bls.G1Jac
+		aggPk bls.G1Jac
 	)
 	weight := 0
 	for _, idx := range signers {
-		bTau.Add(&bTau, &w.crs.lagHTaus[idx])
-		bNegTau.Add(&bNegTau, &w.crs.lag2HTaus[idx])
-		qTau.Add(&qTau, &w.pp.qTaus[idx])
-		aggPk.Add(&aggPk, &w.pp.pKeys[idx])
+		bTau.AddMixed(&w.crs.lagHTaus[idx])
+		b2Tau.AddMixed(&w.crs.lag2HTaus[idx])
+		qTau.AddMixed(&w.pp.qTaus[idx])
+		aggPk.AddMixed(&w.pp.pKeys[idx])
 		weight += w.weights[idx]
 	}
-	bNegTau.Sub(&w.crs.g2a, &bNegTau)
+	bNegTau := w.crs.g2
+	bNegTau.SubAssign(&b2Tau)
 
 	// Compute qrTau and checking its correctness
-	var (
-		qrTau2   bls.G1Jac
-		qrTau    bls.G1Jac
-		qrTauAff bls.G1Affine
-	)
-
+	var qrTau, qrTau2 bls.G1Jac
 	t := len(signers)
 	bases := make([]bls.G1Affine, t)
 	expts := make([]fr.Element, t)
@@ -446,7 +375,6 @@ func (w *WTS) combine(signers []int, sigmas []bls.G2Jac) Sig {
 
 	// first term - second term
 	qrTau.SubAssign(&qrTau2)
-	qrTauAff.FromJacobian(&qrTau)
 
 	// Aggregating the signature
 	var aggSig bls.G2Jac
@@ -455,8 +383,8 @@ func (w *WTS) combine(signers []int, sigmas []bls.G2Jac) Sig {
 	}
 
 	pfP := IPAProof{
-		qTau:  qTau,
-		qrTau: qrTauAff,
+		qTau:  *new(bls.G1Affine).FromJacobian(&qTau),
+		qrTau: *new(bls.G1Affine).FromJacobian(&qrTau),
 	}
 
 	pfB := IPAProof{
@@ -472,10 +400,10 @@ func (w *WTS) combine(signers []int, sigmas []bls.G2Jac) Sig {
 	return Sig{
 		pi:      []IPAProof{pfP, pfB, pfW},
 		ths:     weight,
-		bTau:    bTau,
-		bNegTau: bNegTau,
+		bTau:    *new(bls.G1Affine).FromJacobian(&bTau),
+		bNegTau: *new(bls.G2Affine).FromJacobian(&bNegTau),
 		aggSig:  aggSig,
-		aggPk:   aggPk,
+		aggPk:   *new(bls.G1Affine).FromJacobian(&aggPk),
 	}
 }
 
@@ -483,13 +411,8 @@ func (w *WTS) combine(signers []int, sigmas []bls.G2Jac) Sig {
 func (w *WTS) gverify(msg Message, sigma Sig, ths int) bool {
 
 	// 1. Checking aggregated signature is correct
-	var sigAff bls.G2Affine
 	roMsg, _ := bls.HashToG2(msg, []byte{})
-	sigAff.FromJacobian(&sigma.aggSig)
-
-	P := []bls.G1Affine{sigma.aggPk, w.crs.g1InvAff}
-	Q := []bls.G2Affine{roMsg, sigAff}
-	res, _ := bls.PairingCheck(P, Q)
+	res, _ := bls.PairingCheck([]bls.G1Affine{sigma.aggPk, w.crs.g1InvAff}, []bls.G2Affine{roMsg, *new(bls.G2Affine).FromJacobian(&sigma.aggSig)})
 
 	pfP := sigma.pi[0]
 	pfB := sigma.pi[1]
@@ -497,10 +420,9 @@ func (w *WTS) gverify(msg Message, sigma Sig, ths int) bool {
 
 	// Computing g^{1/n}
 	// TODO: Can pre-process it
-	var gNInv bls.G2Affine
 	nInv := fr.NewElement(uint64(w.n))
 	nInv.Inverse(&nInv)
-	gNInv.ScalarMultiplication(&w.crs.g2a, nInv.BigInt(&big.Int{}))
+	gNInv := *new(bls.G2Affine).FromJacobian(new(bls.G2Jac).ScalarMultiplication(&w.crs.g2, nInv.BigInt(&big.Int{})))
 
 	// Checking the binary relation
 	lhs, _ := bls.Pair([]bls.G1Affine{sigma.bTau}, []bls.G2Affine{sigma.bNegTau})
@@ -510,10 +432,10 @@ func (w *WTS) gverify(msg Message, sigma Sig, ths int) bool {
 	var b2Tau bls.G2Affine
 	b2Tau.Sub(&w.crs.g2a, &sigma.bNegTau)
 
-	var gThs bls.G1Affine
-	gThs.ScalarMultiplication(&w.crs.g1a, big.NewInt(int64(sigma.ths)))
+	gThs := *new(bls.G1Affine).FromJacobian(new(bls.G1Jac).ScalarMultiplication(&w.crs.g1, big.NewInt(int64(sigma.ths))))
 	lhs, _ = bls.Pair([]bls.G1Affine{w.pp.wTau}, []bls.G2Affine{b2Tau})
 	rhs, _ = bls.Pair([]bls.G1Affine{pfW.qTau, pfW.qrTau, gThs}, []bls.G2Affine{w.crs.vHTau, w.crs.g2Tau, gNInv})
+	res = res && lhs.Equal(&rhs)
 
 	// 2 Checking aggP, i.e., s(tau)b(tau) = q(tau)z(tau) + tau q_r(tau) + aggPk/n
 
