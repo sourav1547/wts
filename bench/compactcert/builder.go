@@ -23,68 +23,44 @@ func (s SigSlots) Bytes() ([][]byte, error) {
 	return b, nil
 }
 
-type Builder[T PubKey] struct {
+type Builder struct {
 	Params
 
 	sigs         SigSlots // Indexed by pos in participants
 	signedWeight uint64
-	participants []Participant[T]
+	participants []Participant
 	partyTree    *MerkleTree
 	h            hash.Hash
-	batchVerify  BatchVerifier[T]
 }
 
-func NewBuilder[T PubKey](params Params, parts []Participant[T], partyTree *MerkleTree) *Builder[T] {
-	return &Builder[T]{
+func NewBuilder(params Params, parts []Participant, partyTree *MerkleTree) *Builder {
+	return &Builder{
 		Params:       params,
 		sigs:         make([]sigSlot, len(parts)),
 		participants: parts,
 		partyTree:    partyTree,
 		h:            sha3.New256(),
-		batchVerify:  DefaultBatchVerifier[T],
 	}
 }
 
-func (b *Builder[T]) WithHash(h hash.Hash) *Builder[T] {
+func (b *Builder) WithHash(h hash.Hash) *Builder {
 	b.h = h
 	return b
 }
 
-func (b *Builder[T]) WithBatchVerifier(v BatchVerifier[T]) *Builder[T] {
-	b.batchVerify = v
-	return b
-}
-
-func (b *Builder[T]) AddSignatures(pos []int, sigs [][]byte) error {
-	pks := make([]T, len(pos))
-	for i, p := range pos {
-		if err := b.validatePart(p); err != nil {
-			return err
-		}
-		pks[i] = b.participants[p].PK
-	}
-	if err := b.batchVerify(pks, b.Msg, sigs); err != nil {
-		return err
-	}
-	for i, p := range pos {
-		b.addSignature(p, sigs[i])
-	}
-	return nil
-}
-
-func (b *Builder[T]) AddSignature(pos int, sig []byte) error {
+func (b *Builder) AddSignature(pos int, sig []byte) error {
 	if err := b.validatePart(pos); err != nil {
 		return err
 	}
-	if b.participants[pos].PK.Verify(b.Msg, sig) != nil {
-		return fmt.Errorf("invalid signature for party %d", pos)
+	if ok, err := b.participants[pos].PK.Verify(sig, b.Msg, b.h); !ok {
+		return fmt.Errorf("invalid signature for party %d: %s", pos, err)
 	}
 
 	b.addSignature(pos, sig)
 	return nil
 }
 
-func (b *Builder[T]) validatePart(pos int) error {
+func (b *Builder) validatePart(pos int) error {
 	if b.sigs[pos].Sig != nil {
 		return fmt.Errorf("already have signature for party %d", pos)
 	}
@@ -99,12 +75,12 @@ func (b *Builder[T]) validatePart(pos int) error {
 	return nil
 }
 
-func (b *Builder[T]) addSignature(pos int, sig []byte) {
+func (b *Builder) addSignature(pos int, sig []byte) {
 	b.sigs[pos].Sig = sig
 	b.signedWeight += b.participants[pos].Weight
 }
 
-func (b *Builder[T]) Build() (*Cert[T], error) {
+func (b *Builder) Build() (*Cert, error) {
 	if b.signedWeight < b.Params.ProvenWeight {
 		return nil, fmt.Errorf("signed weight %d < proven weight %d", b.signedWeight, b.Params.ProvenWeight)
 	}
@@ -127,10 +103,10 @@ func (b *Builder[T]) Build() (*Cert[T], error) {
 		return nil, err
 	}
 
-	c := &Cert[T]{
+	c := &Cert{
 		SigCommit:    sigtree.Root(),
 		SignedWeight: b.signedWeight,
-		Reveals:      make(map[uint64]Reveal[T], nr),
+		Reveals:      make(map[uint64]Reveal, nr),
 	}
 
 	proofPositions := make([]int, 0, nr)
@@ -158,7 +134,7 @@ func (b *Builder[T]) Build() (*Cert[T], error) {
 			continue
 		}
 
-		c.Reveals[pos] = Reveal[T]{
+		c.Reveals[pos] = Reveal{
 			SigSlot: b.sigs[pos],
 			Party:   b.participants[pos],
 		}
@@ -184,7 +160,7 @@ func (b *Builder[T]) Build() (*Cert[T], error) {
 // coinWeight.
 //
 // coinIndex works by doing a binary search on the sigs array.
-func (b *Builder[T]) coinIndex(coinWeight uint64) (uint64, error) {
+func (b *Builder) coinIndex(coinWeight uint64) (uint64, error) {
 	// if !b.sigsHasValidL {
 	// 	return 0, fmt.Errorf("coinIndex: need valid L values")
 	// }

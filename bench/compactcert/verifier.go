@@ -4,39 +4,33 @@ import (
 	"fmt"
 	"hash"
 
+	"github.com/consensys/gnark-crypto/signature"
 	"golang.org/x/crypto/sha3"
 )
 
-type Verifier[T PubKey] struct {
+type Verifier struct {
 	Params
 
-	partyRoot   []byte
-	h           hash.Hash
-	batchVerify BatchVerifier[T]
+	partyRoot []byte
+	h         hash.Hash
 }
 
-func NewVerifier[T PubKey](params Params, partyRoot []byte) *Verifier[T] {
-	return &Verifier[T]{
-		Params:      params,
-		partyRoot:   partyRoot,
-		h:           sha3.New256(),
-		batchVerify: DefaultBatchVerifier[T],
+func NewVerifier(params Params, partyRoot []byte) *Verifier {
+	return &Verifier{
+		Params:    params,
+		partyRoot: partyRoot,
+		h:         sha3.New256(),
 	}
 }
 
-func (v *Verifier[T]) WithHash(h hash.Hash) *Verifier[T] {
+func (v *Verifier) WithHash(h hash.Hash) *Verifier {
 	v.h = h
 	return v
 }
 
-func (v *Verifier[T]) WithBatchVerifier(batchVerifier BatchVerifier[T]) *Verifier[T] {
-	v.batchVerify = batchVerifier
-	return v
-}
-
 // Verify checks if c is a valid compact certificate for the message
-// and participants that were used to construct the Verifier[T].
-func (v *Verifier[T]) Verify(c *Cert[T]) error {
+// and participants that were used to construct the Verifier.
+func (v *Verifier) Verify(c *Cert) error {
 	if c.SignedWeight <= v.ProvenWeight {
 		return fmt.Errorf("cert signed weight %d <= proven weight %d", c.SignedWeight, v.ProvenWeight)
 	}
@@ -44,7 +38,7 @@ func (v *Verifier[T]) Verify(c *Cert[T]) error {
 	// Verify all of the reveals
 	sigs := make(map[int][]byte)
 	parts := make(map[int][]byte)
-	pks := make([]T, 0, len(c.Reveals))
+	pks := make([]signature.PublicKey, 0, len(c.Reveals))
 	sigsList := make([][]byte, 0, len(c.Reveals))
 	for pos, r := range c.Reveals {
 		slotb, err := r.SigSlot.MarshalBinary()
@@ -60,13 +54,9 @@ func (v *Verifier[T]) Verify(c *Cert[T]) error {
 
 		pks = append(pks, r.Party.PK)
 		sigsList = append(sigsList, r.SigSlot.Sig)
-		// if r.Party.PK.Verify(v.Msg, r.SigSlot.Sig) != nil {
-		// 	return fmt.Errorf("signature in reveal pos %d does not verify", pos)
-		// }
-	}
-
-	if err := v.batchVerify(pks, v.Msg, sigsList); err != nil {
-		return fmt.Errorf("signature in reveal does not verify\n%s", err)
+		if ok, _ := r.Party.PK.Verify(r.SigSlot.Sig, v.Msg, v.h); !ok {
+			return fmt.Errorf("signature in reveal pos %d does not verify", pos)
+		}
 	}
 
 	if err := VerifyMerkleTree(c.SigCommit, sigs, c.SigProofs); err != nil {

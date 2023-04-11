@@ -1,10 +1,13 @@
 package compactcert
 
 import (
+	"crypto/rand"
 	"fmt"
 	"testing"
 
+	"github.com/consensys/gnark-crypto/signature"
 	"github.com/stretchr/testify/require"
+	"golang.org/x/crypto/sha3"
 	"golang.org/x/exp/constraints"
 )
 
@@ -18,9 +21,9 @@ func NewSlice[T constraints.Integer | constraints.Float](start T, count int, ste
 }
 
 func TestBuildVerify(t *testing.T) {
-	totalWeight := 10_000_000
+	totalWeight := 100_000
 	npartHi := 1_000
-	npartLo := 990_000
+	npartLo := 9_000
 	npart := npartHi + npartLo
 
 	param := Params{
@@ -30,13 +33,14 @@ func TestBuildVerify(t *testing.T) {
 	}
 
 	// Share the key; we allow the same vote key to appear in multiple accounts..
-	signer := NewBLSSigner()
+	signer, err := GenerateSchnorrSigner(rand.Reader)
+	require.NoError(t, err)
 
-	var parts Participants[BLSPubKey]
-	var sigs [][]byte
+	var parts Participants
+	sigs := make([][]byte, 0, npart)
 	for i := 0; i < npartHi; i++ {
-		part := Participant[BLSPubKey]{
-			PK:     signer.BLSPubKey,
+		part := Participant{
+			PK:     signer.Public(),
 			Weight: uint64(totalWeight / 2 / npartHi),
 		}
 
@@ -44,15 +48,16 @@ func TestBuildVerify(t *testing.T) {
 	}
 
 	for i := 0; i < npartLo; i++ {
-		part := Participant[BLSPubKey]{
-			PK:     signer.BLSPubKey,
+		part := Participant{
+			PK:     signer.Public(),
 			Weight: uint64(totalWeight / 2 / npartLo),
 		}
 
 		parts = append(parts, part)
 	}
 
-	sig, err := signer.Sign(param.Msg)
+	hFunc := sha3.New256()
+	sig, err := signer.Sign(param.Msg, hFunc)
 	require.NoError(t, err)
 	for i := 0; i < npart; i++ {
 		sigs = append(sigs, sig)
@@ -65,10 +70,11 @@ func TestBuildVerify(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	b := NewBuilder(param, parts, partcom).WithBatchVerifier(BLSBatchVerifier)
+	b := NewBuilder(param, parts, partcom)
 
-	err = b.AddSignatures(NewSlice(0, npart, 1), sigs)
-	require.NoError(t, err)
+	for i := 0; i < npart; i++ {
+		require.NoError(t, b.AddSignature(i, sigs[i]))
+	}
 
 	cert, err := b.Build()
 	require.NoError(t, err)
@@ -97,32 +103,38 @@ func TestBuildVerify(t *testing.T) {
 	fmt.Printf("    %6d bytes reveals[*] total\n", someRevealSize)
 	fmt.Printf("  %6d bytes total\n", cert.Size())
 
-	verif := NewVerifier[BLSPubKey](param, partcom.Root()).WithBatchVerifier(BLSBatchVerifier)
+	verif := NewVerifier(param, partcom.Root())
 	err = verif.Verify(cert)
 	require.NoError(t, err)
 }
 
 func BenchmarkBuildVerify(b *testing.B) {
-	totalWeight := 1000000
-	npart := 10000
+	totalWeight := 1_000
+	npart := 1_000
 
 	param := Params{
 		Msg:          []byte("hello world"),
-		ProvenWeight: uint64(totalWeight / 2),
+		ProvenWeight: uint64(totalWeight / 3),
 		SecKQ:        128,
 	}
 
-	var parts Participants[BLSPubKey]
-	var partkeys []Signer
+	var parts Participants
+	var partkeys []signature.Signer
 	var sigs [][]byte
+	hFunc := sha3.New256()
+
+	nSigners := int(2 * npart / 3)
 	for i := 0; i < npart; i++ {
-		signer := NewBLSSigner()
-		part := Participant[BLSPubKey]{
-			PK:     signer.BLSPubKey,
+		signer, err := GenerateSchnorrSigner(rand.Reader)
+		if err != nil {
+			b.Fatal(err)
+		}
+		part := Participant{
+			PK:     signer.Public(),
 			Weight: uint64(totalWeight / npart),
 		}
 
-		sig, err := signer.Sign(param.Msg)
+		sig, err := signer.Sign(param.Msg, hFunc)
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -133,7 +145,7 @@ func BenchmarkBuildVerify(b *testing.B) {
 	}
 
 	var (
-		cert    *Cert[BLSPubKey]
+		cert    *Cert
 		partcom *MerkleTree
 		err     error
 	)
@@ -145,8 +157,10 @@ func BenchmarkBuildVerify(b *testing.B) {
 
 	b.Run("AddBuild", func(b *testing.B) {
 		for i := 0; i < b.N; i++ {
-			builder := NewBuilder(param, parts, partcom).WithBatchVerifier(BLSBatchVerifier)
-			require.NoError(b, builder.AddSignatures(NewSlice(0, npart, 1), sigs))
+			builder := NewBuilder(param, parts, partcom)
+			for i := 0; i < nSigners; i++ {
+				require.NoError(b, builder.AddSignature(i, sigs[i]))
+			}
 			// b.StartTimer()
 			cert, err = builder.Build()
 			require.NoError(b, err)
@@ -157,7 +171,7 @@ func BenchmarkBuildVerify(b *testing.B) {
 
 	b.Run("Verify", func(b *testing.B) {
 		for i := 0; i < b.N; i++ {
-			verif := NewVerifier[BLSPubKey](param, partcom.Root()).WithBatchVerifier(BLSBatchVerifier)
+			verif := NewVerifier(param, partcom.Root())
 			require.NoError(b, verif.Verify(cert))
 		}
 	})
@@ -165,8 +179,8 @@ func BenchmarkBuildVerify(b *testing.B) {
 
 func TestCoinIndex(t *testing.T) {
 	n := 1000
-	b := &Builder[BLSPubKey]{
-		participants: make([]Participant[BLSPubKey], n),
+	b := &Builder{
+		participants: make([]Participant, n),
 		sigs:         make([]sigSlot, n),
 	}
 

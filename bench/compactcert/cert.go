@@ -6,6 +6,8 @@ import (
 	"encoding/binary"
 	"encoding/gob"
 	"fmt"
+
+	"github.com/consensys/gnark-crypto/signature"
 )
 
 // maxReveals is a bound on allocation and on numReveals to limit log computation
@@ -18,22 +20,19 @@ type Params struct {
 	SecKQ        uint64
 }
 
-type Participant[T PubKey] struct {
-	PK     T
+type Participant struct {
+	PK     signature.PublicKey
 	Weight uint64
 }
 
-func (p Participant[T]) MarshalBinary() ([]byte, error) {
-	b, err := p.PK.MarshalBinary()
-	if err != nil {
-		return nil, err
-	}
+func (p Participant) MarshalBinary() ([]byte, error) {
+	b := p.PK.Bytes()
 	return binary.LittleEndian.AppendUint64(b, p.Weight), nil
 }
 
-type Participants[T PubKey] []Participant[T]
+type Participants []Participant
 
-func (p Participants[T]) Bytes() ([][]byte, error) {
+func (p Participants) Bytes() ([][]byte, error) {
 	out := make([][]byte, 0, len(p))
 	for _, part := range p {
 		b, err := part.MarshalBinary()
@@ -56,12 +55,12 @@ func (s sigSlot) MarshalBinary() ([]byte, error) {
 	return binary.LittleEndian.AppendUint64(b, s.L), nil
 }
 
-type Reveal[T PubKey] struct {
-	Party   Participant[T]
+type Reveal struct {
+	Party   Participant
 	SigSlot sigSlot
 }
 
-func (r Reveal[T]) Size() (s uint64) {
+func (r Reveal) Size() (s uint64) {
 	b, _ := r.Party.MarshalBinary()
 	s += uint64(len(b))
 	b, _ = r.SigSlot.MarshalBinary()
@@ -69,15 +68,15 @@ func (r Reveal[T]) Size() (s uint64) {
 	return
 }
 
-type Cert[T PubKey] struct {
+type Cert struct {
 	SigCommit    []byte
 	SignedWeight uint64
 	SigProofs    [][]byte
 	PartyProofs  [][]byte
-	Reveals      map[uint64]Reveal[T]
+	Reveals      map[uint64]Reveal
 }
 
-func (c *Cert[T]) Size() (s uint64) {
+func (c *Cert) Size() (s uint64) {
 	s += uint64(len(c.SigCommit))
 	s += uint64(binary.Size(c.SignedWeight))
 	for _, p := range c.SigProofs {
@@ -92,7 +91,7 @@ func (c *Cert[T]) Size() (s uint64) {
 	return
 }
 
-func (c *Cert[T]) MarshalBinary() ([]byte, error) {
+func (c *Cert) MarshalBinary() ([]byte, error) {
 	var buf bytes.Buffer
 	enc := gob.NewEncoder(&buf)
 	if err := enc.Encode(c); err != nil {
@@ -101,7 +100,7 @@ func (c *Cert[T]) MarshalBinary() ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
-func (c *Cert[T]) UnmarshalBinary(data []byte) error {
+func (c *Cert) UnmarshalBinary(data []byte) error {
 	buf := bytes.NewBuffer(data)
 	dec := gob.NewDecoder(buf)
 	return dec.Decode(c)
