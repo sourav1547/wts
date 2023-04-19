@@ -137,7 +137,6 @@ func BenchmarkGenCRS(b *testing.B) {
 	for i := 0; i < n; i++ {
 		weights[i] = i
 	}
-
 	crs := GenCRS(n)
 	w := NewWTS(n, weights, crs)
 	b.ResetTimer()

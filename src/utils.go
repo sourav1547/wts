@@ -37,6 +37,45 @@ func GetLagAt(at fr.Element, indices []fr.Element) []fr.Element {
 	return results
 }
 
+// This function is not generic. I will use the Prod(x-hi)=x^n-1
+func GetBatchLag(L, H []fr.Element) [][]fr.Element {
+	nL := len(L)
+	nH := len(H)
+	lagLH := make([][]fr.Element, nL)
+	denos := make([]fr.Element, nH)
+
+	// Compute all the denominators
+	var deno, diff fr.Element
+	for i := 0; i < nH; i++ {
+		deno = fr.One()
+		for ii := 0; ii < nH; ii++ {
+			if i != ii {
+				diff.Sub(&H[i], &H[ii])
+				deno.Mul(&deno, &diff)
+			}
+		}
+		denos[i] = deno
+	}
+
+	powers := make([]fr.Element, nL)
+	var power fr.Element
+	one := fr.One()
+	for i := 0; i < nL; i++ {
+		power.Exp(L[i], big.NewInt(int64(nH)))
+		powers[i].Sub(&power, &one)
+	}
+
+	for i := 0; i < nL; i++ {
+		lagLH[i] = make([]fr.Element, nH)
+		for ii := 0; ii < nH; ii++ {
+			deno.Sub(&L[i], &H[ii])
+			deno.Mul(&deno, &denos[ii])
+			lagLH[i][ii].Div(&powers[i], &deno)
+		}
+	}
+	return lagLH
+}
+
 func GetOmega(n, seed int) fr.Element {
 	var x, y, z fr.Element
 	var nF, nFNegInv fr.Element

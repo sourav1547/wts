@@ -134,11 +134,7 @@ func GenCRS(n int) CRS {
 	}
 	gAlpha := new(bls.G1Jac).ScalarMultiplication(&g1, alpha.BigInt(&big.Int{}))
 
-	// TODO: Must optimize this
-	lagLH := make([][]fr.Element, n-1)
-	for l := 0; l < n-1; l++ {
-		lagLH[l] = GetLagAt(L[l], H)
-	}
+	lagLH := GetBatchLag(L, H)
 
 	return CRS{
 		g1:        g1,
