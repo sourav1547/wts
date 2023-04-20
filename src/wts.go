@@ -258,20 +258,24 @@ func (w *WTS) preProcess() {
 	}
 	wg1.Wait()
 
-	var lTau bls.G1Jac
-	exps := make([]fr.Element, w.n-1)
-	bases := make([]bls.G1Jac, w.n-1)
+	var wg2 sync.WaitGroup
+	wg2.Add(w.n)
 	qTaus := make([]bls.G1Jac, w.n)
 	for i := 0; i < w.n; i++ {
-		for l := 0; l < w.n-1; l++ {
-			lTau.FromAffine(&w.pp.lTaus[l][i])
-			bases[l] = lagLs[l]
-			bases[l].SubAssign(&lTau)
-			exps[l].Mul(&w.crs.lagLH[l][i], &w.crs.zHLInv) // Can also be pushed to Setup
-		}
-		qTaus[i].MultiExp(bls.BatchJacobianToAffineG1(bases), exps, ecc.MultiExpConfig{})
+		go func(i int) {
+			defer wg2.Done()
+			var lTau bls.G1Jac
+			exps := make([]fr.Element, w.n-1)
+			bases := make([]bls.G1Jac, w.n-1)
+			for l := 0; l < w.n-1; l++ {
+				lTau.FromAffine(&w.pp.lTaus[l][i])
+				bases[l] = lagLs[l]
+				bases[l].SubAssign(&lTau)
+				exps[l].Mul(&w.crs.lagLH[l][i], &w.crs.zHLInv) // Can also be pushed to Setup
+			}
+			qTaus[i].MultiExp(bls.BatchJacobianToAffineG1(bases), exps, ecc.MultiExpConfig{})
+		}(i)
 	}
-	w.pp.qTaus = bls.BatchJacobianToAffineG1(qTaus)
 
 	// pre-processing weights
 	weightsF := make([]fr.Element, w.n)
@@ -281,6 +285,9 @@ func (w *WTS) preProcess() {
 
 	wTau, _ := new(bls.G1Jac).MultiExp(w.crs.lagHTaus, weightsF, ecc.MultiExpConfig{})
 	w.pp.wTau = *new(bls.G1Affine).FromJacobian(wTau)
+
+	wg2.Wait()
+	w.pp.qTaus = bls.BatchJacobianToAffineG1(qTaus)
 }
 
 func (w *WTS) weightsPf(signers []int) (bls.G1Affine, bls.G1Affine) {
