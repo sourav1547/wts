@@ -158,13 +158,7 @@ func (b *BLS) pverify(roMsg bls.G2Affine, sigma bls.G2Jac, vk bls.G1Affine) bool
 	var sigmaAff bls.G2Affine
 	sigmaAff.FromJacobian(&sigma)
 
-	P := []bls.G1Affine{vk, b.crs.g1InvAf}
-	Q := []bls.G2Affine{roMsg, sigmaAff}
-
-	res, err := bls.PairingCheck(P, Q)
-	if err != nil {
-		fmt.Println("Panic mts verification failed")
-	}
+	res, _ := bls.PairingCheck([]bls.G1Affine{vk, b.crs.g1InvAf}, []bls.G2Affine{roMsg, sigmaAff})
 	return res
 }
 
