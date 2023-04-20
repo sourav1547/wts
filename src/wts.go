@@ -2,6 +2,7 @@ package wts
 
 import (
 	"math/big"
+	"sync"
 
 	"github.com/consensys/gnark-crypto/ecc"
 	bls "github.com/consensys/gnark-crypto/ecc/bls12-381"
@@ -168,6 +169,34 @@ func NewWTS(n int, weights []int, crs CRS) WTS {
 	return w
 }
 
+// Only to be used for benchmarking per signer key generation
+func (w *WTS) keyGenBench() {
+	var sKey fr.Element
+	var pKey bls.G1Jac
+	var aTau, hTau bls.G1Affine
+
+	sKey.SetRandom()
+	skInt := sKey.BigInt(&big.Int{})
+
+	var wg sync.WaitGroup
+	wg.Add(w.n - 1)
+	lTaus := make([]bls.G1Affine, w.n)
+	for i := 0; i < w.n-1; i++ {
+		go func(i int) {
+			defer wg.Done()
+			lTaus[i].ScalarMultiplication(&w.crs.lagLTaus[i], skInt)
+		}(i)
+	}
+
+	// TODO: work with Jacobian in all these cases
+	pKey.ScalarMultiplication(&w.crs.g1, skInt)
+	aTau.ScalarMultiplication(&w.crs.gAlpha, skInt)
+	hTau.ScalarMultiplication(&w.crs.lagHTaus[0], skInt)
+
+	wg.Wait()
+}
+
+// This is the keyGen function we use in the paper.
 func (w *WTS) keyGen() {
 	parties := make([]Party, w.n)
 	sKeys := make([]fr.Element, w.n)
@@ -176,6 +205,16 @@ func (w *WTS) keyGen() {
 		sKeys[i].SetRandom()
 	}
 	pKeys := bls.BatchScalarMultiplicationG1(&w.crs.g1a, sKeys)
+
+	var wg sync.WaitGroup
+	wg.Add(w.n - 1)
+	lTaus := make([][]bls.G1Affine, w.n)
+	for i := 0; i < w.n-1; i++ {
+		go func(i int) {
+			defer wg.Done()
+			lTaus[i] = bls.BatchScalarMultiplicationG1(&w.crs.lagLTaus[i], sKeys)
+		}(i)
+	}
 
 	for i := 0; i < w.n; i++ {
 		parties[i] = Party{
@@ -186,7 +225,6 @@ func (w *WTS) keyGen() {
 	}
 
 	aTaus := bls.BatchScalarMultiplicationG1(&w.crs.gAlpha, sKeys)
-	lTaus := make([][]bls.G1Affine, w.n)
 	hTaus := make([]bls.G1Jac, w.n)
 
 	var pComm, lagHTau bls.G1Jac
@@ -196,10 +234,7 @@ func (w *WTS) keyGen() {
 		pComm.AddAssign(&hTaus[i])
 	}
 
-	// OPT: Can we optimize this?
-	for ii := 0; ii < w.n-1; ii++ {
-		lTaus[ii] = bls.BatchScalarMultiplicationG1(&w.crs.lagLTaus[ii], sKeys)
-	}
+	wg.Wait()
 
 	w.pp = Params{
 		pKeys: pKeys,
@@ -211,19 +246,22 @@ func (w *WTS) keyGen() {
 	w.signers = parties
 }
 
-// Compute
 func (w *WTS) preProcess() {
-	// OPT: Can we optimize this?
 	lagLs := make([]bls.G1Jac, w.n-1)
+	var wg1 sync.WaitGroup
+	wg1.Add(w.n - 1)
 	for l := 0; l < w.n-1; l++ {
-		lagLs[l].MultiExp(w.pp.lTaus[l], w.crs.lagLH[l], ecc.MultiExpConfig{})
+		go func(l int) {
+			defer wg1.Done()
+			lagLs[l].MultiExp(w.pp.lTaus[l], w.crs.lagLH[l], ecc.MultiExpConfig{})
+		}(l)
 	}
+	wg1.Wait()
 
 	var lTau bls.G1Jac
-	qTaus := make([]bls.G1Jac, w.n)
 	exps := make([]fr.Element, w.n-1)
 	bases := make([]bls.G1Jac, w.n-1)
-
+	qTaus := make([]bls.G1Jac, w.n)
 	for i := 0; i < w.n; i++ {
 		for l := 0; l < w.n-1; l++ {
 			lTau.FromAffine(&w.pp.lTaus[l][i])

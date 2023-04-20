@@ -112,6 +112,27 @@ func TestKeyGen(t *testing.T) {
 	}
 }
 
+func BenchmarkKeyGen(b *testing.B) {
+	n := 1 << 10
+
+	weights := make([]int, n)
+	for i := 0; i < n; i++ {
+		weights[i] = i
+	}
+
+	crs := GenCRS(n)
+	w := WTS{
+		n:       n,
+		weights: weights,
+		crs:     crs,
+	}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		w.keyGenBench()
+	}
+}
+
 func BenchmarkCComp1(b *testing.B) {
 	n := 1 << 15
 	scalars := make([]fr.Element, n)
