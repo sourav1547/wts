@@ -10,8 +10,10 @@ import (
 	"github.com/consensys/gnark-crypto/hash"
 	"github.com/consensys/gnark-crypto/signature/eddsa"
 	"github.com/consensys/gnark/backend/groth16"
+	"github.com/consensys/gnark/backend/plonk"
 	"github.com/consensys/gnark/frontend"
 	"github.com/consensys/gnark/frontend/cs/r1cs"
+	"github.com/consensys/gnark/frontend/cs/scs"
 	"github.com/consensys/gnark/test"
 
 	tedwards "github.com/consensys/gnark-crypto/ecc/twistededwards"
@@ -52,7 +54,7 @@ func (circuit *ECircuit) Define(api frontend.API) error {
 
 	// tip: api.Println behaves like go fmt.Println but accepts frontend.Variable
 	// that are resolved at Proving time
-	api.Println("message", circuit.Message)
+	// api.Println("message", circuit.Message)
 
 	// verify the EdDSA signature
 	return VerifyS(curve, circuit.Signature, circuit.Message, circuit.PublicKey, &mimc)
@@ -70,7 +72,7 @@ func TestEBasic(t *testing.T) {
 	snarkCurve := ecc.BN254
 
 	seed := time.Now().Unix()
-	t.Logf("setting seed in rand %d", seed)
+	// t.Logf("setting seed in rand %d", seed)
 	randomness := rand.New(rand.NewSource(seed))
 
 	// pick a message to sign
@@ -78,7 +80,7 @@ func TestEBasic(t *testing.T) {
 	assert.NoError(err)
 	var msg big.Int
 	msg.Rand(randomness, snarkField)
-	t.Log("msg to sign", msg.String())
+	// t.Log("msg to sign", msg.String())
 	msgData := msg.Bytes()
 
 	var assignment ECircuit
@@ -99,17 +101,61 @@ func TestEBasic(t *testing.T) {
 	assignment.PublicKey.Assign(snarkCurve, pubKey.Bytes())
 	assignment.Signature.Assign(snarkCurve, signature)
 
-	var circuit ECircuit
-	ccs, _ := frontend.Compile(ecc.BN254.ScalarField(), r1cs.NewBuilder, &circuit)
-
-	// groth16 zkSNARK: Setup
-	pk, vk, _ := groth16.Setup(ccs)
-
-	// witness definition
+	// groth16 example here
+	var gcircuit ECircuit
+	ccs, _ := frontend.Compile(ecc.BN254.ScalarField(), r1cs.NewBuilder, &gcircuit)
 	witness, _ := frontend.NewWitness(&assignment, ecc.BN254.ScalarField())
 	publicWitness, _ := witness.Public()
 
-	// groth16: Prove & Verify
+	pk, vk, _ := groth16.Setup(ccs)
 	proof, _ := groth16.Prove(ccs, pk, witness)
-	groth16.Verify(proof, vk, publicWitness)
+	err = groth16.Verify(proof, vk, publicWitness)
+	assert.NoError(err, "Successful verification")
+}
+
+func TestEBasicP(t *testing.T) {
+	assert := test.NewAssert(t)
+
+	type testData struct {
+		hash  hash.Hash
+		curve tedwards.ID
+	}
+
+	conf := testData{hash.MIMC_BN254, tedwards.BN254}
+	snarkCurve := ecc.BN254
+
+	seed := time.Now().Unix()
+	randomness := rand.New(rand.NewSource(seed))
+
+	// pick a message to sign
+	snarkField, err := twistededwards.GetSnarkField(conf.curve)
+	var msg big.Int
+	msg.Rand(randomness, snarkField)
+	msgData := msg.Bytes()
+
+	var assignment ECircuit
+	assignment.Message = msg
+
+	privKey, err := eddsa.New(conf.curve, randomness)
+	signature, err := privKey.Sign(msgData, conf.hash.New())
+
+	pubKey := privKey.Public()
+
+	checkSig, err := pubKey.Verify(signature, msgData[:], conf.hash.New())
+	assert.True(checkSig, "signature verification failed")
+
+	assignment.PublicKey.Assign(snarkCurve, pubKey.Bytes())
+	assignment.Signature.Assign(snarkCurve, signature)
+
+	// plonk example here
+	var circuit ECircuit
+	ccs, _ := frontend.Compile(ecc.BN254.ScalarField(), scs.NewBuilder, &circuit)
+	witness, _ := frontend.NewWitness(&assignment, ecc.BN254.ScalarField())
+	publicWitness, _ := witness.Public()
+
+	srs, err := test.NewKZGSRS(ccs)
+	pk, vk, err := plonk.Setup(ccs, srs)
+	correctProof, err := plonk.Prove(ccs, pk, witness)
+	err = plonk.Verify(correctProof, vk, publicWitness)
+	assert.NoError(err, "Successful verification")
 }

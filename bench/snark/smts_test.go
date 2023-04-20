@@ -20,13 +20,17 @@ import (
 	"github.com/consensys/gnark-crypto/hash"
 	"github.com/consensys/gnark-crypto/signature"
 	"github.com/consensys/gnark-crypto/signature/eddsa"
+	"github.com/consensys/gnark/backend/groth16"
+	"github.com/consensys/gnark/backend/plonk"
 	"github.com/consensys/gnark/frontend"
+	"github.com/consensys/gnark/frontend/cs/r1cs"
+	"github.com/consensys/gnark/frontend/cs/scs"
 	"github.com/consensys/gnark/std/algebra/twistededwards"
 	"github.com/consensys/gnark/std/hash/mimc"
 	"github.com/consensys/gnark/test"
 )
 
-const NUM_NODES = 16
+const NUM_NODES = 100
 
 type mtsCircuit struct {
 	curveID      tedwards.ID
@@ -144,7 +148,7 @@ func TestMts(t *testing.T) {
 		if !verified {
 			t.Fatal("The merkle proof in plain go should pass")
 		}
-		t.Logf("verified merkle proof")
+		// t.Logf("verified merkle proof")
 
 		witness.RootHash = merkleRoot
 		witness.Path[id] = make([]frontend.Variable, len(proof))
@@ -160,6 +164,120 @@ func TestMts(t *testing.T) {
 		circuit.Helper[id] = make([]frontend.Variable, len(proof)-1)
 	}
 
-	//assert.ProverSucceeded(&circuit, &witness, test.WithCurves(snarkCurve))
-	assert.SolvingSucceeded(&circuit, &witness, test.WithCurves(snarkCurve))
+	assert.ProverSucceeded(&circuit, &witness, test.WithCurves(snarkCurve))
+	// assert.SolvingSucceeded(&circuit, &witness, test.WithCurves(snarkCurve))
+
+	// ccs, _ := frontend.Compile(ecc.BLS12_381.ScalarField(), r1cs.NewBuilder, &circuit)
+	// gwitness, _ := frontend.NewWitness(&witness, ecc.BLS12_381.ScalarField())
+	// publicWitness, _ := gwitness.Public()
+
+	// pk, vk, _ := groth16.Setup(ccs)
+	// proof, _ := groth16.Prove(ccs, pk, gwitness)
+	// groth16.Verify(proof, vk, publicWitness)
+}
+
+func BenchmarkMts(b *testing.B) {
+	type testData struct {
+		hash  hash.Hash
+		curve tedwards.ID
+	}
+
+	conf := testData{hash.MIMC_BLS12_381, tedwards.BLS12_381}
+	snarkCurve := ecc.BLS12_381
+
+	seed := time.Now().Unix()
+	randomness := rand.New(rand.NewSource(seed))
+
+	var privKeys [NUM_NODES]signature.Signer
+
+	snarkField, _ := twistededwards.GetSnarkField(conf.curve)
+
+	var msg big.Int
+	msg.Rand(randomness, snarkField)
+	msgData := msg.Bytes()
+
+	// create and compile the circuit for signature verification
+	var circuit mtsCircuit
+	circuit.curveID = conf.curve
+
+	var witness mtsCircuit
+	witness.Message = msg
+
+	for i := 0; i < NUM_NODES; i++ {
+		// generate parameters for the signatures
+		privKey, _ := eddsa.New(conf.curve, randomness)
+		privKeys[i] = privKey
+
+		// generate signature
+		signature, _ := privKey.Sign(msgData[:], conf.hash.New())
+		pubKey := privKey.Public()
+
+		witness.PublicKeys[i].Assign(snarkCurve, pubKey.Bytes())
+		witness.Signatures[i].Assign(snarkCurve, signature)
+	}
+
+	numProofs := NUM_NODES
+	circuit.Path = make([][]frontend.Variable, numProofs)
+	circuit.Helper = make([][]frontend.Variable, numProofs)
+
+	witness.Path = make([][]frontend.Variable, numProofs)
+	witness.Helper = make([][]frontend.Variable, numProofs)
+
+	for id := 0; id < numProofs; id++ {
+		// build a merkle tree -- todo: check use of hashing here
+		var buf bytes.Buffer
+		for i := 0; i < NUM_NODES; i++ {
+			var leaf fr.Element
+			leaf.SetBytes(privKeys[i].Public().Bytes())
+			b := leaf.Bytes()
+			buf.Write(b[:])
+		}
+
+		// build & verify proof for an elmt in the file
+		proofIndex := uint64(id)
+		segmentSize := 32
+		merkleRoot, proof, numLeaves, err := merkletree.BuildReaderProof(&buf, bls12381.NewMiMC(), segmentSize, proofIndex)
+		if err != nil {
+			os.Exit(-1)
+		}
+		proofHelper := GenerateProofHelper(proof, proofIndex, numLeaves)
+
+		witness.RootHash = merkleRoot
+		witness.Path[id] = make([]frontend.Variable, len(proof))
+		witness.Helper[id] = make([]frontend.Variable, len(proof)-1)
+		for i := 0; i < len(proof); i++ {
+			witness.Path[id][i] = (proof[i])
+		}
+		for i := 0; i < len(proof)-1; i++ {
+			witness.Helper[id][i] = (proofHelper[i])
+		}
+
+		circuit.Path[id] = make([]frontend.Variable, len(proof))
+		circuit.Helper[id] = make([]frontend.Variable, len(proof)-1)
+	}
+
+	fwitness, _ := frontend.NewWitness(&witness, ecc.BLS12_381.ScalarField())
+
+	// Testing plonk
+	b.Run("plonk", func(b *testing.B) {
+		ccs, _ := frontend.Compile(ecc.BLS12_381.ScalarField(), scs.NewBuilder, &circuit)
+		srs, _ := test.NewKZGSRS(ccs)
+		pk, _, _ := plonk.Setup(ccs, srs)
+
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			plonk.Prove(ccs, pk, fwitness)
+		}
+	})
+
+	// Testing groth16
+	b.Run("groth16", func(b *testing.B) {
+		ccs, _ := frontend.Compile(ecc.BLS12_381.ScalarField(), r1cs.NewBuilder, &circuit)
+		pk, _, _ := groth16.Setup(ccs)
+
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			groth16.Prove(ccs, pk, fwitness)
+		}
+	})
 }
