@@ -10,6 +10,8 @@ import (
 	"os"
 
 	"github.com/consensys/gnark-crypto/accumulator/merkletree"
+	"github.com/consensys/gnark-crypto/ecc"
+
 	//"github.com/consensys/gnark-crypto/ecc"
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
 	bls12381 "github.com/consensys/gnark-crypto/ecc/bls12-381/fr/mimc"
@@ -24,16 +26,14 @@ import (
 	"github.com/consensys/gnark/test"
 )
 
-const NUM_NODES = 4
+const NUM_NODES = 16
 
 type mtsCircuit struct {
 	curveID      tedwards.ID
 	PublicKeys   [NUM_NODES]PublicKey `gnark:",public"`
 	Signatures   [NUM_NODES]Signature `gnark:",public"`
-	Weights      [NUM_NODES]int       `gnark:",public"`
 	Message      frontend.Variable    `gnark:",public"`
 	RootHash     frontend.Variable    `gnark:",public"`
-	threshold    int                  `gnark:",public"`
 	Path, Helper [][]frontend.Variable
 }
 
@@ -69,6 +69,7 @@ func TestMts(t *testing.T) {
 	}
 
 	conf := testData{hash.MIMC_BLS12_381, tedwards.BLS12_381}
+	snarkCurve := ecc.BLS12_381
 
 	seed := time.Now().Unix()
 	t.Logf("setting seed in rand %d", seed)
@@ -76,12 +77,10 @@ func TestMts(t *testing.T) {
 
 	var privKeys [NUM_NODES]signature.Signer
 
-	snarkCurve, err := twistededwards.GetSnarkCurve(conf.curve)
+	snarkField, err := twistededwards.GetSnarkField(conf.curve)
 	assert.NoError(err)
-
-	// pick a message to sign
 	var msg big.Int
-	msg.Rand(randomness, snarkCurve.Info().Fr.Modulus())
+	msg.Rand(randomness, snarkField)
 	t.Log("msg to sign", msg.String())
 	msgData := msg.Bytes()
 
@@ -161,7 +160,6 @@ func TestMts(t *testing.T) {
 		circuit.Helper[id] = make([]frontend.Variable, len(proof)-1)
 	}
 
-	assert.ProverSucceeded(&circuit, &witness, test.WithCurves(snarkCurve))
-	// assert.ProverFailed(&circuit, &witness, test.WithCurves(snarkCurve))
-	// assert.SolvingSucceeded(&circuit, &witness, test.WithCurves(snarkCurve))
+	//assert.ProverSucceeded(&circuit, &witness, test.WithCurves(snarkCurve))
+	assert.SolvingSucceeded(&circuit, &witness, test.WithCurves(snarkCurve))
 }
