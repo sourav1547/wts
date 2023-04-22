@@ -20,6 +20,7 @@ import (
 	"github.com/consensys/gnark-crypto/hash"
 	"github.com/consensys/gnark-crypto/signature"
 	"github.com/consensys/gnark-crypto/signature/eddsa"
+	"github.com/consensys/gnark/backend"
 	"github.com/consensys/gnark/backend/groth16"
 	"github.com/consensys/gnark/backend/plonk"
 	"github.com/consensys/gnark/frontend"
@@ -30,7 +31,7 @@ import (
 	"github.com/consensys/gnark/test"
 )
 
-const NUM_NODES = 4
+const NUM_NODES = 16
 
 type mtsCircuit struct {
 	curveID      tedwards.ID
@@ -164,16 +165,8 @@ func TestMts(t *testing.T) {
 		circuit.Helper[id] = make([]frontend.Variable, len(proof)-1)
 	}
 
-	assert.ProverSucceeded(&circuit, &witness, test.WithCurves(snarkCurve))
-	// assert.SolvingSucceeded(&circuit, &witness, test.WithCurves(snarkCurve))
-
-	// ccs, _ := frontend.Compile(ecc.BLS12_381.ScalarField(), r1cs.NewBuilder, &circuit)
-	// gwitness, _ := frontend.NewWitness(&witness, ecc.BLS12_381.ScalarField())
-	// publicWitness, _ := gwitness.Public()
-
-	// pk, vk, _ := groth16.Setup(ccs)
-	// proof, _ := groth16.Prove(ccs, pk, gwitness)
-	// groth16.Verify(proof, vk, publicWitness)
+	// assert.ProverSucceeded(&circuit, &witness, test.WithCurves(snarkCurve), test.WithBackends(backend.PLONK), test.NoFuzzing(), test.NoSerialization())
+	assert.ProverSucceeded(&circuit, &witness, test.WithCurves(snarkCurve), test.WithBackends(backend.GROTH16), test.NoFuzzing(), test.NoSerialization())
 }
 
 func BenchmarkMts(b *testing.B) {
