@@ -30,7 +30,7 @@ import (
 	"github.com/consensys/gnark/test"
 )
 
-const NUM_NODES = 100
+const NUM_NODES = 4
 
 type mtsCircuit struct {
 	curveID      tedwards.ID
@@ -257,27 +257,42 @@ func BenchmarkMts(b *testing.B) {
 	}
 
 	fwitness, _ := frontend.NewWitness(&witness, ecc.BLS12_381.ScalarField())
+	publicWitness, _ := fwitness.Public()
 
 	// Testing plonk
-	b.Run("plonk", func(b *testing.B) {
-		ccs, _ := frontend.Compile(ecc.BLS12_381.ScalarField(), scs.NewBuilder, &circuit)
-		srs, _ := test.NewKZGSRS(ccs)
-		pk, _, _ := plonk.Setup(ccs, srs)
-
+	ccsp, _ := frontend.Compile(ecc.BLS12_381.ScalarField(), scs.NewBuilder, &circuit)
+	srs, _ := test.NewKZGSRS(ccsp)
+	pkp, vkp, _ := plonk.Setup(ccsp, srs)
+	var pfp plonk.Proof
+	b.Run("plonk-prove", func(b *testing.B) {
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
-			plonk.Prove(ccs, pk, fwitness)
+			pfp, _ = plonk.Prove(ccsp, pkp, fwitness)
+		}
+	})
+
+	b.Run("plonk-verify", func(b *testing.B) {
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			plonk.Verify(pfp, vkp, publicWitness)
 		}
 	})
 
 	// Testing groth16
-	b.Run("groth16", func(b *testing.B) {
-		ccs, _ := frontend.Compile(ecc.BLS12_381.ScalarField(), r1cs.NewBuilder, &circuit)
-		pk, _, _ := groth16.Setup(ccs)
-
+	ccsg, _ := frontend.Compile(ecc.BLS12_381.ScalarField(), r1cs.NewBuilder, &circuit)
+	pkg, vkg, _ := groth16.Setup(ccsg)
+	var pfg groth16.Proof
+	b.Run("groth16-prove", func(b *testing.B) {
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
-			groth16.Prove(ccs, pk, fwitness)
+			pfg, _ = groth16.Prove(ccsg, pkg, fwitness)
+		}
+	})
+
+	b.Run("groth16-verify", func(b *testing.B) {
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			groth16.Verify(pfg, vkg, publicWitness)
 		}
 	})
 }
