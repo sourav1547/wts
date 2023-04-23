@@ -109,21 +109,43 @@ func TestBuildVerify(t *testing.T) {
 }
 
 func BenchmarkBuildVerify(b *testing.B) {
-	totalWeight := 1_000
-	npart := 1_000
+	// for _, npart := range []int{256, 1024, 4096} {
+	// 	for _, threshold := range []int{npart / 2, 2 * npart / 3} {
+	// 		b.Run(fmt.Sprintf("npart=%d/threshold=%d/unweighted", npart, threshold), func(b *testing.B) {
+	// 			benchBuildVerify(b, npart, threshold, func(i uint64) uint64 { return 1 })
+	// 		})
+	// 	}
+	// }
+	for _, tc := range []struct {
+		name string
+		n, t int
+	}{
+		{"256-129", 256, 129},
+		{"1024-513", 1024, 513},
+		{"4096-2049", 4096, 2049},
+		{"256-171", 256, 171},
+		{"1024-683", 1024, 683},
+		{"4096-2731", 4096, 2731},
+	} {
+		b.Run(tc.name, func(b *testing.B) {
+			benchBuildVerify(b, tc.n, tc.t, func(i uint64) uint64 { return 1 })
+		})
+	}
+}
 
+func benchBuildVerify(b *testing.B, npart, threshold int, weight func(i uint64) uint64) {
 	param := Params{
 		Msg:          []byte("hello world"),
-		ProvenWeight: uint64(totalWeight / 3),
+		ProvenWeight: uint64(threshold),
 		SecKQ:        128,
 	}
+	collectWeight := uint64(5 * threshold / 4)
 
 	var parts Participants
 	var partkeys []signature.Signer
 	var sigs [][]byte
 	hFunc := sha3.New256()
 
-	nSigners := int(2 * npart / 3)
 	for i := 0; i < npart; i++ {
 		signer, err := GenerateSchnorrSigner(rand.Reader)
 		if err != nil {
@@ -131,7 +153,7 @@ func BenchmarkBuildVerify(b *testing.B) {
 		}
 		part := Participant{
 			PK:     signer.Public(),
-			Weight: uint64(totalWeight / npart),
+			Weight: weight(uint64(i)),
 		}
 
 		sig, err := signer.Sign(param.Msg, hFunc)
@@ -158,7 +180,7 @@ func BenchmarkBuildVerify(b *testing.B) {
 	b.Run("AddBuild", func(b *testing.B) {
 		for i := 0; i < b.N; i++ {
 			builder := NewBuilder(param, parts, partcom)
-			for i := 0; i < nSigners; i++ {
+			for i := 0; i < npart && builder.signedWeight < uint64(collectWeight); i++ {
 				require.NoError(b, builder.AddSignature(i, sigs[i]))
 			}
 			// b.StartTimer()
