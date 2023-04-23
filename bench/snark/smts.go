@@ -1,5 +1,3 @@
-// Taken from https://github.com/rsinha/mts/blob/main/snark/mts.go
-
 // Package eddsa provides a ZKP-circuit function to verify a EdDSA signature.
 package wts
 
@@ -23,7 +21,6 @@ import (
 
 // PublicKey stores an eddsa public key (to be used in gnark circuit)
 type PublicKey struct {
-	// TODO: To include a weight parameter here.
 	A twistededwards.Point
 }
 
@@ -90,6 +87,58 @@ func Verify(
 		curve.API().AssertIsEqual(Q.X, 0)
 		curve.API().AssertIsEqual(Q.Y, 1)
 	}
+
+	return nil
+}
+
+func VerifyS(
+	curve twistededwards.Curve,
+	sig Signature,
+	msg frontend.Variable,
+	pubKey PublicKey,
+	eddsa_hasher hash.Hash) error {
+
+	eddsa_hasher.Reset()
+	// compute H(R, A, M)
+	eddsa_hasher.Write(sig.R.X)
+	eddsa_hasher.Write(sig.R.Y)
+	eddsa_hasher.Write(pubKey.A.X)
+	eddsa_hasher.Write(pubKey.A.Y)
+	eddsa_hasher.Write(msg)
+	hRAM := eddsa_hasher.Sum()
+
+	base := twistededwards.Point{
+		X: curve.Params().Base[0],
+		Y: curve.Params().Base[1],
+	}
+
+	//[S]G-[H(R,A,M)]*A
+	_A := curve.Neg(pubKey.A)
+	Q := curve.DoubleBaseScalarMul(base, _A, sig.S, hRAM)
+	curve.AssertIsOnCurve(Q)
+
+	//[S]G-[H(R,A,M)]*A-R
+	Q = curve.Add(curve.Neg(Q), sig.R)
+
+	// [cofactor]*(lhs-rhs)
+	log := logger.Logger()
+	if !curve.Params().Cofactor.IsUint64() {
+		err := errors.New("invalid cofactor")
+		log.Err(err).Str("cofactor", curve.Params().Cofactor.String()).Send()
+		return err
+	}
+	cofactor := curve.Params().Cofactor.Uint64()
+	switch cofactor {
+	case 4:
+		Q = curve.Double(curve.Double(Q))
+	case 8:
+		Q = curve.Double(curve.Double(curve.Double(Q)))
+	default:
+		log.Warn().Str("cofactor", curve.Params().Cofactor.String()).Msg("curve cofactor is not implemented")
+	}
+
+	curve.API().AssertIsEqual(Q.X, 0)
+	curve.API().AssertIsEqual(Q.Y, 1)
 
 	return nil
 }

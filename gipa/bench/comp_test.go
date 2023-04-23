@@ -8,7 +8,7 @@ import (
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
 )
 
-const LOG_N = 14
+const LOG_N = 10
 
 func BenchmarkTarget(b *testing.B) {
 	n := 1 << LOG_N
@@ -55,8 +55,24 @@ func BenchmarkSource(b *testing.B) {
 }
 
 func BenchmarkMultVer(b *testing.B) {
-	_, _, g1a, _ := bls.Generators()
 	n := 1 << LOG_N
+
+	_, _, g1a, g2a := bls.Generators()
+
+	var (
+		ck    fr.Element
+		ckInt big.Int
+		comb  bls.G2Affine
+		compk bls.G1Affine
+	)
+
+	ck.SetRandom()
+	ck.ToBigIntRegular(&ckInt)
+	compk.ScalarMultiplication(&g1a, &ckInt)
+
+	ck.SetRandom()
+	ck.ToBigIntRegular(&ckInt)
+	comb.ScalarMultiplication(&g2a, &ckInt)
 
 	skeys := make([]fr.Element, n)
 	pks := make([]bls.G1Jac, n)
@@ -74,6 +90,77 @@ func BenchmarkMultVer(b *testing.B) {
 		for ii := 0; ii < n/2; ii++ {
 			apk.AddAssign(&pks[ii])
 		}
+		bls.Pair([]bls.G1Affine{compk}, []bls.G2Affine{comb})
+	}
+}
+
+func BenchmarkIPA2Ver(b *testing.B) {
+	_, _, g1a, g2a := bls.Generators()
+
+	var (
+		ck    fr.Element
+		ckInt big.Int
+		comb  bls.G2Affine
+		comw  bls.G1Affine
+		compk bls.G1Affine
+	)
+
+	ck.SetRandom()
+	ck.ToBigIntRegular(&ckInt)
+	comw.ScalarMultiplication(&g1a, &ckInt)
+
+	ck.SetRandom()
+	ck.ToBigIntRegular(&ckInt)
+	compk.ScalarMultiplication(&g1a, &ckInt)
+
+	ck.SetRandom()
+	ck.ToBigIntRegular(&ckInt)
+	comb.ScalarMultiplication(&g2a, &ckInt)
+
+	/**
+	* 1. <b,w>=t, 1 IPA
+	* 2. b is binary: 1 IPA
+	* 3. <b,pk>=pk*: 1 IPA
+	*
+	* 1. <b,w>=t, 		pi1 = [h^q1(tau), h^z1(tau), z1(0), h^q10(\tau)]
+	* 2. b is binary,	pi2 = [h^q2(tau)]
+	* 3. <b,pk>=pk*, 	pi3 = [h^q3(tau), h^z3(tau), h^z3(0), h^q30(\tau)]
+	* Total: 8 G1 elements, 1 field elements
+	**/
+
+	var (
+		q  bls.G1Affine
+		z  bls.G1Affine
+		q0 bls.G1Affine
+		z0 bls.G1Affine
+		v0 bls.G2Affine
+	)
+
+	ck.SetRandom()
+	ck.ToBigIntRegular(&ckInt)
+	q.ScalarMultiplication(&g1a, &ckInt)
+
+	ck.SetRandom()
+	ck.ToBigIntRegular(&ckInt)
+	z.ScalarMultiplication(&g1a, &ckInt)
+
+	ck.SetRandom()
+	ck.ToBigIntRegular(&ckInt)
+	q0.ScalarMultiplication(&g1a, &ckInt)
+
+	ck.SetRandom()
+	ck.ToBigIntRegular(&ckInt)
+	z0.ScalarMultiplication(&g1a, &ckInt)
+
+	ck.SetRandom()
+	ck.ToBigIntRegular(&ckInt)
+	v0.ScalarMultiplication(&g2a, &ckInt)
+
+	b.ResetTimer()
+
+	for i := 0; i < b.N; i++ {
+		bls.Pair([]bls.G1Affine{compk}, []bls.G2Affine{comb})
+		bls.Pair([]bls.G1Affine{compk}, []bls.G2Affine{comb})
 	}
 }
 
@@ -130,7 +217,7 @@ func BenchmarkIPAVer(b *testing.B) {
 	}
 }
 
-func testSource(t *testing.T) {
+func TestSource(t *testing.T) {
 	_, _, g1a, _ := bls.Generators()
 	bases := make([][]bls.G1Affine, LOG_N)
 
@@ -147,7 +234,7 @@ func testSource(t *testing.T) {
 	sourceCost(LOG_N, bases)
 }
 
-func testTarget(t *testing.T) {
+func TestTarget(t *testing.T) {
 	n := 1 << LOG_N
 	pkeys := make([]bls.G1Affine, n)
 	ckeys := make([]bls.G2Affine, n)

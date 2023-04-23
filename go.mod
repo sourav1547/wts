@@ -3,7 +3,6 @@ module github.com/sourav1547/wts
 go 1.19
 
 require (
-	github.com/Workiva/go-datastructures v1.0.53
 	github.com/consensys/gnark v0.8.0
 	github.com/consensys/gnark-crypto v0.9.1
 	github.com/stretchr/testify v1.8.1

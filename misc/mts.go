@@ -79,7 +79,7 @@ func (m *MTS) mts_key_gen() {
 	for i := 0; i < m.n; i++ {
 		idx := fr.NewElement(uint64(i + 1))
 		temp := spoly.Eval(&idx)
-		temp.ToBigInt(&skeys[i])
+		temp.BigInt(&skeys[i])
 		vkeys[i].ScalarMultiplication(&m.g1, &skeys[i])
 	}
 
@@ -96,7 +96,7 @@ func (m *MTS) mts_key_gen() {
 
 	zero.SetZero()
 	sk := spoly.Eval(&zero)
-	vk.ScalarMultiplication(&m.g1, sk.ToBigInt(big.NewInt(0)))
+	vk.ScalarMultiplication(&m.g1, sk.BigInt(big.NewInt(0)))
 	vk_aff.FromJacobian(&vk)
 
 	var (
@@ -107,7 +107,7 @@ func (m *MTS) mts_key_gen() {
 		idx = fr.NewElement(uint64(i))
 		idx.Sub(&zero, &idx)
 		com_key = spoly.Eval(&idx)
-		coms_jac[i-1].ScalarMultiplication(&m.g1, com_key.ToBigInt(big.NewInt(0)))
+		coms_jac[i-1].ScalarMultiplication(&m.g1, com_key.BigInt(big.NewInt(0)))
 		coms[i-1].FromJacobian(&coms_jac[i-1])
 	}
 
@@ -118,7 +118,7 @@ func (m *MTS) mts_key_gen() {
 	)
 	for i := 0; i < m.n; i++ {
 		alpha.SetRandom()
-		alpha.ToBigInt(&alpha_int)
+		alpha.BigInt(&alpha_int)
 		gks[i].ScalarMultiplication(&m.g2, &alpha_int)
 
 		coms_ks[i] = make([]bls.G1Affine, m.n-i)
@@ -148,7 +148,7 @@ func (m *MTS) mts_psign(msg Message, signer MTSParty) bls.G2Jac {
 		sigma      bls.G2Jac
 		ro_msg_jac bls.G2Jac
 	)
-	ro_msg, err := bls.HashToCurveG2SSWU(msg, dst)
+	ro_msg, err := bls.HashToG2(msg, dst)
 	ro_msg_jac.FromAffine(&ro_msg)
 
 	if err != nil {
@@ -197,11 +197,11 @@ func (m *MTS) mts_combine(sigmas []Sig) MTSSig {
 		idxs[t+i-1].Sub(&zero, &idx)
 	}
 
-	lags := get_lag_at(0, idxs)
+	lags := GetLagAt(0, idxs)
 
-	mpriv.MultiExp(sigs, lags[:t], ecc.MultiExpConfig{ScalarsMont: true})
-	gpub.MultiExp(m.crs.coms[:(m.n-t)], lags[t:], ecc.MultiExpConfig{ScalarsMont: true})
-	gpubk.MultiExp(m.crs.coms_ks[t][:(m.n-t)], lags[t:], ecc.MultiExpConfig{ScalarsMont: true})
+	mpriv.MultiExp(sigs, lags[:t], ecc.MultiExpConfig{})
+	gpub.MultiExp(m.crs.coms[:(m.n-t)], lags[t:], ecc.MultiExpConfig{})
+	gpubk.MultiExp(m.crs.coms_ks[t][:(m.n-t)], lags[t:], ecc.MultiExpConfig{})
 
 	return MTSSig{
 		gpub:  gpub,
