@@ -8,6 +8,7 @@ require (
 	github.com/stretchr/testify v1.8.1
 	golang.org/x/crypto v0.6.0
 	golang.org/x/exp v0.0.0-20230315142452-642cacee5cc0
+	github.com/Workiva/go-datastructures v1.0.53
 )
 
 require (
