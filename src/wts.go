@@ -244,19 +244,25 @@ func (w *WTS) keyGen() {
 	for i := 0; i < w.n; i++ {
 		sKeys[i].SetRandom()
 	}
-	pKeys := bls.BatchScalarMultiplicationG1(&w.crs.g1a, sKeys)
-	pKeysB := bls.BatchScalarMultiplicationG1(&w.crs.g1Ba, sKeys)
 
 	var wg sync.WaitGroup
-	wg.Add(w.n - 1)
-	lTaus := make([][]bls.G1Affine, w.n)
-	for i := 0; i < w.n-1; i++ {
-		go func(i int) {
-			defer wg.Done()
-			lTaus[i] = bls.BatchScalarMultiplicationG1(&w.crs.lagLTaus[i], sKeys)
-		}(i)
-	}
+	wg.Add(3)
 
+	var pKeysB []bls.G1Affine
+	go func() {
+		defer wg.Done()
+		pKeysB = bls.BatchScalarMultiplicationG1(&w.crs.g1Ba, sKeys)
+	}()
+
+	lTaus := make([][]bls.G1Affine, w.n)
+	go func() {
+		defer wg.Done()
+		for i := 0; i < w.n-1; i++ {
+			lTaus[i] = bls.BatchScalarMultiplicationG1(&w.crs.lagLTaus[i], sKeys)
+		}
+	}()
+
+	pKeys := bls.BatchScalarMultiplicationG1(&w.crs.g1a, sKeys)
 	for i := 0; i < w.n; i++ {
 		parties[i] = Party{
 			weight:  w.weights[i],
@@ -265,7 +271,12 @@ func (w *WTS) keyGen() {
 		}
 	}
 
-	aTaus := bls.BatchScalarMultiplicationG1(&w.crs.gAlpha, sKeys)
+	var aTaus []bls.G1Affine
+	go func() {
+		defer wg.Done()
+		aTaus = bls.BatchScalarMultiplicationG1(&w.crs.gAlpha, sKeys)
+	}()
+
 	hTaus := make([]bls.G1Jac, w.n)
 	hTausH := make([]bls.G1Jac, w.n)
 
