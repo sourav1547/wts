@@ -236,7 +236,7 @@ func TestBin(t *testing.T) {
 	assert.Equal(t, lhs.Equal(&rhs), true, "Proving Binary relation!")
 
 	// Checking weights relation
-	qwTau, qrwTau := w.weightsPf(signers)
+	qwTau, qrwTau, _ := w.weightsPf(signers)
 
 	var gThs bls.G1Affine
 	nInv := fr.NewElement(uint64(w.n))
@@ -253,7 +253,7 @@ func TestWTSPSign(t *testing.T) {
 	msg := []byte("hello world")
 	roMsg, _ := bls.HashToG2(msg, []byte{})
 
-	n := 1 << 5
+	n := 1 << 4
 	weights := make([]int, n)
 	for i := 0; i < n; i++ {
 		weights[i] = i
