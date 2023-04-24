@@ -199,6 +199,74 @@ func benchBuildVerify(b *testing.B, npart, threshold int, weight func(i uint64) 
 	})
 }
 
+// Below is a modification of the go-algorand compact certificate benchmark
+// to work with the go-algorand codebase directly. Mimics similar behavior
+// to above benchmark but with go-algorand codebase.
+// https://github.com/algorand/go-algorand/blob/ade1fead41c1dc298fc7c7640137d37825e1a7ae/crypto/compactcert/builder_test.go
+//
+// func BenchmarkBuildVerify(b *testing.B) {
+// 	for _, threshold := range []int{256, 1024, 4096} {
+// 		b.Run(fmt.Sprintf("t=%d", threshold), func(b *testing.B) {
+// 			benchBuildVerify(b, 2*threshold, threshold, func(i uint64) uint64 { return 1 })
+// 		})
+// 	}
+// }
+
+// func benchBuildVerify(b *testing.B, npart, threshold int, weight func(i uint64) uint64) {
+// 	param := Params{
+// 		Msg:          TestMessage("hello world"),
+// 		ProvenWeight: uint64(threshold),
+// 		SecKQ:        128,
+// 	}
+// 	collectWeight := uint64(5 * threshold / 4)
+
+// 	var parts []Participant
+// 	var partkeys []*crypto.OneTimeSignatureSecrets
+// 	var sigs []crypto.OneTimeSignature
+
+// 	for i := 0; i < npart; i++ {
+// 		key := crypto.GenerateOneTimeSignatureSecrets(0, 1)
+// 		part := Participant{
+// 			PK:          key.OneTimeSignatureVerifier,
+// 			Weight:      weight(uint64(i)),
+// 			KeyDilution: 10000,
+// 		}
+
+// 		ephID := basics.OneTimeIDForRound(0, part.KeyDilution)
+// 		sig := key.Sign(ephID, param.Msg)
+
+// 		partkeys = append(partkeys, key)
+// 		sigs = append(sigs, sig)
+// 		parts = append(parts, part)
+// 	}
+
+// 	var cert *Cert
+// 	partcom, err := merklearray.Build(PartCommit{parts})
+// 	require.NoError(b, err)
+
+// 	b.Run("AddBuild", func(b *testing.B) {
+// 		for i := 0; i < b.N; i++ {
+// 			builder, err := MkBuilder(param, parts, partcom)
+// 			require.NoError(b, err)
+// 			for i := 0; i < npart && builder.signedWeight < uint64(collectWeight); i++ {
+// 				require.NoError(b, builder.Add(uint64(i), sigs[i], true))
+// 			}
+// 			// b.StartTimer()
+// 			cert, err = builder.Build()
+// 			require.NoError(b, err)
+
+// 			b.ReportMetric(float64(len(protocol.Encode(cert))), "certsizeB/op")
+// 		}
+// 	})
+
+// 	b.Run("Verify", func(b *testing.B) {
+// 		for i := 0; i < b.N; i++ {
+// 			verif := MkVerifier(param, partcom.Root())
+// 			require.NoError(b, verif.Verify(cert))
+// 		}
+// 	})
+// }
+
 func TestCoinIndex(t *testing.T) {
 	n := 1000
 	b := &Builder{
