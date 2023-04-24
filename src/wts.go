@@ -19,8 +19,8 @@ type Party struct {
 }
 
 type IPAProof struct {
-	qTau  bls.G1Affine
-	qrTau bls.G1Affine
+	qTau bls.G1Affine
+	rTau bls.G1Affine
 }
 
 type Sig struct {
@@ -335,7 +335,7 @@ func (w *WTS) preProcess() {
 	w.pp.qTaus = bls.BatchJacobianToAffineG1(qTaus)
 }
 
-func (w *WTS) weightsPf(signers []int) (bls.G1Affine, bls.G1Affine, bls.G1Jac) {
+func (w *WTS) weightsPf(signers []int) (bls.G1Jac, bls.G1Jac, bls.G1Jac) {
 	bF := make([]fr.Element, w.n)
 	wF := make([]fr.Element, w.n)
 	rF := make([]fr.Element, w.n)
@@ -372,10 +372,10 @@ func (w *WTS) weightsPf(signers []int) (bls.G1Affine, bls.G1Affine, bls.G1Jac) {
 	fft.BitReverse(rF)
 
 	qTau, _ := new(bls.G1Jac).MultiExp(w.crs.PoT, bF, ecc.MultiExpConfig{})
-	qrTau, _ := new(bls.G1Jac).MultiExp(w.crs.PoT[:w.n-1], rF[1:], ecc.MultiExpConfig{})
-	qrTauH, _ := new(bls.G1Jac).MultiExp(w.crs.PoTH, rF, ecc.MultiExpConfig{})
+	rTau, _ := new(bls.G1Jac).MultiExp(w.crs.PoT[:w.n-1], rF[1:], ecc.MultiExpConfig{})
+	pTauH, _ := new(bls.G1Jac).MultiExp(w.crs.PoTH, rF, ecc.MultiExpConfig{})
 
-	return *new(bls.G1Affine).FromJacobian(qTau), *new(bls.G1Affine).FromJacobian(qrTau), *qrTauH
+	return *qTau, *rTau, *pTauH
 }
 
 func (w *WTS) binaryPf(signers []int) bls.G1Affine {
@@ -425,25 +425,8 @@ func (w *WTS) pverify(roMsg bls.G2Affine, sigma bls.G2Jac, vk bls.G1Affine) bool
 	return res
 }
 
-// The combine function
-func (w *WTS) combine(signers []int, sigmas []bls.G2Jac) Sig {
-	var bTau, qTau, pTau, aggPk, aggPkB bls.G1Jac
-	var b2Tau bls.G2Jac
-
-	weight := 0
-	for _, idx := range signers {
-		bTau.AddMixed(&w.crs.lagHTaus[idx])
-		b2Tau.AddMixed(&w.crs.lag2HTaus[idx])
-		qTau.AddMixed(&w.pp.qTaus[idx])
-		aggPk.AddMixed(&w.pp.pKeys[idx])
-		aggPkB.AddMixed(&w.pp.pKeysB[idx])
-		pTau.AddAssign(&w.pp.hTausH[idx])
-		weight += w.weights[idx]
-	}
-	bNegTau := w.crs.g2
-	bNegTau.SubAssign(&b2Tau)
-
-	// Compute qrTau and checking its correctness
+// Generate rTau
+func (w *WTS) secretPf(signers []int) bls.G1Jac {
 	var qrTau, qrTau2 bls.G1Jac
 	t := len(signers)
 	bases := make([]bls.G1Affine, t)
@@ -468,53 +451,71 @@ func (w *WTS) combine(signers []int, sigmas []bls.G2Jac) Sig {
 
 	// first term - second term
 	qrTau.SubAssign(&qrTau2)
+	return qrTau
+}
 
-	// Aggregating the signature
-	var aggSig bls.G2Jac
-	for _, sig := range sigmas {
-		aggSig.AddAssign(&sig)
-	}
+// The combine function
+func (w *WTS) combine(signers []int, sigmas []bls.G2Jac) Sig {
+	var wg sync.WaitGroup
+	wg.Add(4)
 
-	// TODO: Call this using a different thread
-	qB := w.binaryPf(signers)
+	var bTau, qTau, pTau, aggPk, aggPkB bls.G1Jac
+	var b2Tau, aggSig, bNegTau bls.G2Jac
+	weight := 0
+	go func() {
+		defer wg.Done()
+		for _, idx := range signers {
+			bTau.AddMixed(&w.crs.lagHTaus[idx])
+			b2Tau.AddMixed(&w.crs.lag2HTaus[idx])
+			qTau.AddMixed(&w.pp.qTaus[idx])
+			aggPk.AddMixed(&w.pp.pKeys[idx])
+			aggPkB.AddMixed(&w.pp.pKeysB[idx])
+			pTau.AddAssign(&w.pp.hTausH[idx])
+			weight += w.weights[idx]
+		}
+		bNegTau = w.crs.g2
+		bNegTau.SubAssign(&b2Tau)
 
-	// TODO: Call this using a different thread
-	qwTau, qrwTau, qrwTauH := w.weightsPf(signers)
+		// Aggregating the signature
+		for _, sig := range sigmas {
+			aggSig.AddAssign(&sig)
+		}
+	}()
+
+	var qB bls.G1Affine
+	go func() {
+		defer wg.Done()
+		qB = w.binaryPf(signers)
+	}()
+
+	var qwTau, rwTau, pwTauH bls.G1Jac
+	go func() {
+		defer wg.Done()
+		qwTau, rwTau, pwTauH = w.weightsPf(signers)
+	}()
+
+	var rTau bls.G1Jac
+	go func() {
+		defer wg.Done()
+		rTau = w.secretPf(signers)
+	}()
+	wg.Wait()
 
 	bTauAff := new(bls.G1Affine).FromJacobian(&bTau)
 	aggPkAff := new(bls.G1Affine).FromJacobian(&aggPk)
+	xi := w.getFSChal([]bls.G1Affine{w.pp.pComm, w.pp.wTau, *bTauAff, *aggPkAff}, weight)
+	xiInt := xi.BigInt(&big.Int{})
 
-	pBytes := w.pp.pComm.Bytes()
-	wBytes := w.pp.wTau.Bytes()
-	bBytes := bTauAff.Bytes()
-	aggPkBytes := aggPkAff.Bytes()
-	tBytes := make([]byte, 4)
-	binary.LittleEndian.PutUint32(tBytes, uint32(weight))
+	qTau.AddAssign(qwTau.ScalarMultiplication(&qwTau, xiInt))
+	rTau.AddAssign(rwTau.ScalarMultiplication(&rwTau, xiInt))
+	pTau.AddAssign(pwTauH.ScalarMultiplication(&pwTauH, xiInt))
 
-	// Hash(pComm, wComm, bTau, aggPk, t)
-	msg := make([]byte, 4*48+4)
-	copy(msg[:48], pBytes[:])
-	copy(msg[48:2*48], wBytes[:])
-	copy(msg[2*48:3*48], bBytes[:])
-	copy(msg[3*48:4*48], aggPkBytes[:])
-	copy(msg[4*48:], tBytes)
-
-	hFunc := sha256.New()
-	hFunc.Reset()
-	xi := *new(fr.Element).SetBytes(hFunc.Sum(msg))
-
-	qTau.AddMixed(new(bls.G1Affine).ScalarMultiplication(&qwTau, xi.BigInt(&big.Int{})))
-	qrTau.AddMixed(new(bls.G1Affine).ScalarMultiplication(&qrwTau, xi.BigInt(&big.Int{})))
 	pfO := IPAProof{
-		qTau:  *new(bls.G1Affine).FromJacobian(&qTau),
-		qrTau: *new(bls.G1Affine).FromJacobian(&qrTau),
+		qTau: *new(bls.G1Affine).FromJacobian(&qTau),
+		rTau: *new(bls.G1Affine).FromJacobian(&rTau),
 	}
 
-	qrwTauH.ScalarMultiplication(&qrwTauH, xi.BigInt(&big.Int{}))
-	pTau.AddAssign(&qrwTauH)
-
 	return Sig{
-		xi:      xi,
 		pi:      pfO,
 		qB:      qB,
 		ths:     weight,
@@ -525,6 +526,23 @@ func (w *WTS) combine(signers []int, sigmas []bls.G2Jac) Sig {
 		aggPk:   *aggPkAff,
 		aggPkB:  *new(bls.G1Affine).FromJacobian(&aggPkB),
 	}
+}
+
+// Get the Fiat-Shamir challenge for the IPA
+func (w *WTS) getFSChal(vals []bls.G1Affine, ths int) fr.Element {
+	n := len(vals)
+	hMsg := make([]byte, n*48+4)
+	for i, val := range vals {
+		mBytes := val.Bytes()
+		copy(hMsg[i*48:(i+1)*48], mBytes[:])
+	}
+	tBytes := make([]byte, 4)
+	binary.LittleEndian.PutUint32(tBytes, uint32(ths))
+	copy(hMsg[n*48:], tBytes)
+
+	hFunc := sha256.New()
+	hFunc.Reset()
+	return *new(fr.Element).SetBytes(hFunc.Sum(hMsg))
 }
 
 // WTS global verify
@@ -556,25 +574,7 @@ func (w *WTS) gverify(msg Message, sigma Sig, ths int) bool {
 	var b2Tau bls.G2Affine
 	b2Tau.Sub(&w.crs.g2a, &sigma.bNegTau)
 
-	// Fiat Shamir
-	pBytes := w.pp.pComm.Bytes()
-	wBytes := w.pp.wTau.Bytes()
-	bBytes := sigma.bTau.Bytes()
-	aggPkBytes := sigma.aggPk.Bytes()
-	tBytes := make([]byte, 4)
-	binary.LittleEndian.PutUint32(tBytes, uint32(sigma.ths))
-
-	// Hash(pComm, wComm, bTau, aggPk, t)
-	hMsg := make([]byte, 4*48+4)
-	copy(hMsg[:48], pBytes[:])
-	copy(hMsg[48:2*48], wBytes[:])
-	copy(hMsg[2*48:3*48], bBytes[:])
-	copy(hMsg[3*48:4*48], aggPkBytes[:])
-	copy(hMsg[4*48:], tBytes)
-
-	hFunc := sha256.New()
-	hFunc.Reset()
-	xi := *new(fr.Element).SetBytes(hFunc.Sum(hMsg))
+	xi := w.getFSChal([]bls.G1Affine{w.pp.pComm, w.pp.wTau, sigma.bTau, sigma.aggPk}, sigma.ths)
 
 	oTau := new(bls.G1Affine).ScalarMultiplication(&w.pp.wTau, xi.BigInt(&big.Int{}))
 	oTau.Add(oTau, &w.pp.pComm)
@@ -586,12 +586,12 @@ func (w *WTS) gverify(msg Message, sigma Sig, ths int) bool {
 
 	// 4. Checking that the inner-product is correct
 	lhs, _ = bls.Pair([]bls.G1Affine{*oTau}, []bls.G2Affine{b2Tau})
-	rhs, _ = bls.Pair([]bls.G1Affine{pi.qTau, pi.qrTau, *mu}, []bls.G2Affine{w.crs.vHTau, w.crs.g2Tau, gNInv})
+	rhs, _ = bls.Pair([]bls.G1Affine{pi.qTau, pi.rTau, *mu}, []bls.G2Affine{w.crs.vHTau, w.crs.g2Tau, gNInv})
 	res = res && lhs.Equal(&rhs)
 
 	// 5. Checking rTau is of correct degree
 	lhs, _ = bls.Pair([]bls.G1Affine{sigma.pTau}, []bls.G2Affine{w.crs.g2a})
-	rhs, _ = bls.Pair([]bls.G1Affine{pi.qrTau, *mu}, []bls.G2Affine{w.crs.hTauHAff, hNInv})
+	rhs, _ = bls.Pair([]bls.G1Affine{pi.rTau, *mu}, []bls.G2Affine{w.crs.hTauHAff, hNInv})
 	res = res && lhs.Equal(&rhs)
 
 	return res && (ths <= sigma.ths)

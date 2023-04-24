@@ -195,7 +195,7 @@ func TestPreProcess(t *testing.T) {
 }
 
 func TestBin(t *testing.T) {
-	n := 1 << 5
+	n := 1 << 7
 	weights := make([]int, n)
 	for i := 0; i < n; i++ {
 		weights[i] = i
@@ -236,7 +236,9 @@ func TestBin(t *testing.T) {
 	assert.Equal(t, lhs.Equal(&rhs), true, "Proving Binary relation!")
 
 	// Checking weights relation
-	qwTau, qrwTau, _ := w.weightsPf(signers)
+	qwTau, rwTau, _ := w.weightsPf(signers)
+	qwTauAff := *new(bls.G1Affine).FromJacobian(&qwTau)
+	rwTauAff := *new(bls.G1Affine).FromJacobian(&rwTau)
 
 	var gThs bls.G1Affine
 	nInv := fr.NewElement(uint64(w.n))
@@ -245,7 +247,7 @@ func TestBin(t *testing.T) {
 	gThs.ScalarMultiplication(&gThs, nInv.BigInt(&big.Int{}))
 
 	lhs, _ = bls.Pair([]bls.G1Affine{w.pp.wTau}, []bls.G2Affine{bTauG2})
-	rhs, _ = bls.Pair([]bls.G1Affine{qwTau, qrwTau, gThs}, []bls.G2Affine{w.crs.vHTau, w.crs.g2Tau, w.crs.g2a})
+	rhs, _ = bls.Pair([]bls.G1Affine{qwTauAff, rwTauAff, gThs}, []bls.G2Affine{w.crs.vHTau, w.crs.g2Tau, w.crs.g2a})
 	assert.Equal(t, lhs.Equal(&rhs), true, "Proving weights!")
 }
 
@@ -253,7 +255,7 @@ func TestWTSPSign(t *testing.T) {
 	msg := []byte("hello world")
 	roMsg, _ := bls.HashToG2(msg, []byte{})
 
-	n := 1 << 4
+	n := 1 << 7
 	weights := make([]int, n)
 	for i := 0; i < n; i++ {
 		weights[i] = i
@@ -267,11 +269,11 @@ func TestWTSPSign(t *testing.T) {
 	var sigmas []bls.G2Jac
 	ths := 0
 	for i := 0; i < n; i++ {
-		if rand.Intn(2) == 1 {
-			signers = append(signers, i)
-			sigmas = append(sigmas, w.psign(msg, w.signers[i]))
-			ths += weights[i]
-		}
+		// if rand.Intn(2) == 1 {
+		signers = append(signers, i)
+		sigmas = append(sigmas, w.psign(msg, w.signers[i]))
+		ths += weights[i]
+		// }
 	}
 
 	for i, idx := range signers {
