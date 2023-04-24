@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math/big"
 	"math/rand"
+	"strconv"
 	"testing"
 
 	bls "github.com/consensys/gnark-crypto/ecc/bls12-381"
@@ -285,9 +286,9 @@ func TestWTSPSign(t *testing.T) {
 	assert.Equal(t, w.gverify(msg, sig, ths), true)
 }
 
-func BenchmarkCombine(b *testing.B) {
+func BenchmarkWTS(b *testing.B) {
 	msg := []byte("hello world")
-	n := 1 << 12
+	n := 1 << 10
 	weights := make([]int, n)
 	for i := 0; i < n; i++ {
 		weights[i] = i
@@ -295,21 +296,42 @@ func BenchmarkCombine(b *testing.B) {
 
 	crs := GenCRS(n)
 	w := NewWTS(n, weights, crs)
-	w.preProcess()
 
-	var signers []int
-	var sigmas []bls.G2Jac
-	ths := 0
-	for i := 0; i < n; i++ {
-		if rand.Intn(2) == 1 {
-			signers = append(signers, i)
-			sigmas = append(sigmas, w.psign(msg, w.signers[i]))
-			ths += weights[i]
+	b.Run("KGen-N:"+strconv.Itoa(n), func(b *testing.B) {
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			w.keyGenBench()
 		}
+	})
+
+	b.Run("Prep-N:"+strconv.Itoa(n), func(b *testing.B) {
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			w.preProcess()
+		}
+	})
+
+	ths := 0
+	signers := make([]int, w.n)
+	sigmas := make([]bls.G2Jac, w.n)
+	for i := 0; i < w.n; i++ {
+		signers[i] = i
+		sigmas[i] = w.psign(msg, w.signers[i])
+		ths += weights[i]
 	}
 
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		w.combine(signers, sigmas)
-	}
+	var sig Sig
+	b.Run("Agg-N:"+strconv.Itoa(n), func(b *testing.B) {
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			sig = w.combine(signers, sigmas)
+		}
+	})
+
+	b.Run("Ver-N:"+strconv.Itoa(n), func(b *testing.B) {
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			w.gverify(msg, sig, ths)
+		}
+	})
 }

@@ -211,7 +211,7 @@ func NewWTS(n int, weights []int, crs CRS) WTS {
 func (w *WTS) keyGenBench() {
 	var sKey fr.Element
 	var pKey, pKeyB bls.G1Jac
-	var aTau, hTau bls.G1Affine
+	var aTau, hTau, hTauH bls.G1Affine
 
 	sKey.SetRandom()
 	skInt := sKey.BigInt(&big.Int{})
@@ -231,6 +231,7 @@ func (w *WTS) keyGenBench() {
 	pKeyB.ScalarMultiplication(&w.crs.g1B, skInt)
 	aTau.ScalarMultiplication(&w.crs.gAlpha, skInt)
 	hTau.ScalarMultiplication(&w.crs.lagHTaus[0], skInt)
+	hTauH.ScalarMultiplication(&w.crs.lagHTausH[0], skInt)
 
 	wg.Wait()
 }
