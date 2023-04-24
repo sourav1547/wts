@@ -316,14 +316,14 @@ func (w *WTS) preProcess() {
 	wg1.Wait()
 
 	var wg2 sync.WaitGroup
-	wg2.Add(w.n)
+	wg2.Add(1)
 	qTaus := make([]bls.G1Jac, w.n)
-	for i := 0; i < w.n; i++ {
-		go func(i int) {
-			defer wg2.Done()
+	go func() {
+		defer wg2.Done()
+		exps := make([]fr.Element, w.n-1)
+		bases := make([]bls.G1Jac, w.n-1)
+		for i := 0; i < w.n; i++ {
 			var lTau bls.G1Jac
-			exps := make([]fr.Element, w.n-1)
-			bases := make([]bls.G1Jac, w.n-1)
 			for l := 0; l < w.n-1; l++ {
 				lTau.FromAffine(&w.pp.lTaus[l][i])
 				bases[l] = lagLs[l]
@@ -331,8 +331,8 @@ func (w *WTS) preProcess() {
 				exps[l].Mul(&w.crs.lagLH[l][i], &w.crs.zHLInv) // Can also be pushed to Setup
 			}
 			qTaus[i].MultiExp(bls.BatchJacobianToAffineG1(bases), exps, ecc.MultiExpConfig{})
-		}(i)
-	}
+		}
+	}()
 
 	// pre-processing weights
 	weightsF := make([]fr.Element, w.n)
