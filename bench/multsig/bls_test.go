@@ -34,93 +34,52 @@ func TestBLS(t *testing.T) {
 	assert.Equal(t, m.gverify(roMsg, msig), true, "BLS Threshold Signature")
 }
 
-func BenchmarkBLSCombineUW(b *testing.B) {
+func BenchmarkBLSUW(b *testing.B) {
 	testCases := []struct {
 		name string
 		n, t int
 	}{
-		{"256-129", 256, 128},
-		{"1024-513", 1024, 512},
-		{"4096-2049", 4096, 2048},
-		{"256-171", 256, 171},
-		{"1024-683", 1024, 683},
-		{"4096-2731", 4096, 2731},
-	}
-
-	msg := []byte("hello world")
-
-	for _, tc := range testCases {
-		b.Run(tc.name, func(b *testing.B) {
-
-			weights := make([]int, tc.n)
-			for i := 0; i < tc.n; i++ {
-				weights[i] = 1
-			}
-
-			crs := GenBLSCRS(tc.n)
-			m := NewBLS(tc.n, tc.t, crs)
-
-			// Picking the first t nodes as things are unweighted
-			signers := make([]int, tc.t+1)
-			sigmas := make([]bls.G2Jac, tc.t+1)
-			for i := 0; i < tc.t+1; i++ {
-				signers[i] = i
-				sigmas[i] = m.psign(msg, m.pp.signers[i])
-			}
-
-			b.ResetTimer()
-			for i := 0; i < b.N; i++ {
-				sigmasAff := make([]bls.G2Affine, len(signers))
-				for ii, sigma := range sigmas {
-					sigmasAff[ii].FromJacobian(&sigma)
-				}
-				m.combine(signers, sigmasAff)
-			}
-		})
-	}
-}
-
-func BenchmarkBLSVerifyUW(b *testing.B) {
-	testCases := []struct {
-		name string
-		n, t int
-	}{
-		{"256-129", 256, 128},
-		{"1024-513", 1024, 512},
-		{"4096-2049", 4096, 2048},
-		{"256-171", 256, 171},
-		{"1024-683", 1024, 683},
-		{"4096-2731", 4096, 2731},
+		{"256", 256, 256},
+		{"1024", 1024, 1024},
+		{"4096", 4096, 4096},
+		{"262144", 262144, 262144},
+		{"1048576", 1048576, 1048576},
 	}
 
 	msg := []byte("hello world")
 	roMsg, _ := bls.HashToG2(msg, []byte{})
 
 	for _, tc := range testCases {
-		b.Run(tc.name, func(b *testing.B) {
 
-			weights := make([]int, tc.n)
-			for i := 0; i < tc.n; i++ {
-				weights[i] = 1
+		weights := make([]int, tc.n)
+		for i := 0; i < tc.n; i++ {
+			weights[i] = 1
+		}
+
+		crs := GenBLSCRS(tc.n)
+		m := NewBLS(tc.n, tc.t-1, crs)
+
+		// Picking the first t nodes as things are unweighted
+		signers := make([]int, tc.t)
+		sigmas := make([]bls.G2Jac, tc.t)
+		for i := 0; i < tc.t; i++ {
+			signers[i] = i
+			sigmas[i] = m.psign(msg, m.pp.signers[i])
+		}
+
+		var sigma bls.G2Jac
+		b.Run(tc.name+"-com", func(b *testing.B) {
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				sigmasAff := make([]bls.G2Affine, len(signers))
+				for ii, sigma := range sigmas {
+					sigmasAff[ii].FromJacobian(&sigma)
+				}
+				sigma = m.combine(signers, sigmasAff)
 			}
+		})
 
-			crs := GenBLSCRS(tc.n)
-			m := NewBLS(tc.n, tc.t, crs)
-
-			// Picking the first t nodes as things are unweighted
-			signers := make([]int, tc.t+1)
-			sigmas := make([]bls.G2Jac, tc.t+1)
-			for i := 0; i < tc.t+1; i++ {
-				signers[i] = i
-				sigmas[i] = m.psign(msg, m.pp.signers[i])
-			}
-
-			sigmasAff := make([]bls.G2Affine, len(signers))
-			for ii, sigma := range sigmas {
-				sigmasAff[ii].FromJacobian(&sigma)
-			}
-			sigma := m.combine(signers, sigmasAff)
-
+		b.Run(tc.name+"-ver", func(b *testing.B) {
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
 				m.gverify(roMsg, sigma)
