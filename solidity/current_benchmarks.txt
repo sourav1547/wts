@@ -1,0 +1,14 @@
+git rev:
+8945587a3d0c29ee3ea152c4e0249e10e5ffbf9b
+
+***  Estimations ***
+**** BLS 12381 ****
+Total cost: 1073000
+Total cost optimized (section 4.8): 855476.0
+**** BN 254 ****
+Total cost: 835600
+Total cost optimized (random linear comb on G_T elements): 682450
+
+***  Implementation ***
+WTSTest:testWTSVerify() (gas: 960732)
+WTSTest:testWTSVerifyOptimized() (gas: 805428)

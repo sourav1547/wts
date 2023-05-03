@@ -1,0 +1,7 @@
+{
+	"dependencies": {
+		"ganache": "^7.8.0",
+		"ganache-cli": "^6.12.2",
+		"solium": "^1.2.5"
+	}
+}
