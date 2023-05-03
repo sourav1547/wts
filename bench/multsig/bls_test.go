@@ -42,8 +42,6 @@ func BenchmarkBLSUW(b *testing.B) {
 		{"256", 256, 256},
 		{"1024", 1024, 1024},
 		{"4096", 4096, 4096},
-		{"262144", 262144, 262144},
-		{"1048576", 1048576, 1048576},
 	}
 
 	msg := []byte("hello world")
@@ -68,7 +66,58 @@ func BenchmarkBLSUW(b *testing.B) {
 		}
 
 		var sigma bls.G2Jac
-		b.Run(tc.name+"-com", func(b *testing.B) {
+		b.Run(tc.name+"-agg", func(b *testing.B) {
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				sigmasAff := make([]bls.G2Affine, len(signers))
+				for ii, sigma := range sigmas {
+					sigmasAff[ii].FromJacobian(&sigma)
+				}
+				sigma = m.combine(signers, sigmasAff)
+			}
+		})
+
+		b.Run(tc.name+"-ver", func(b *testing.B) {
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				m.gverify(roMsg, sigma)
+			}
+		})
+	}
+}
+
+func BenchmarkBLSLarge(b *testing.B) {
+	testCases := []struct {
+		name string
+		n, t int
+	}{
+		{"32768", 32768, 32768},
+		{"65536", 65536, 65536},
+	}
+
+	msg := []byte("hello world")
+	roMsg, _ := bls.HashToG2(msg, []byte{})
+
+	for _, tc := range testCases {
+
+		weights := make([]int, tc.n)
+		for i := 0; i < tc.n; i++ {
+			weights[i] = 1
+		}
+
+		crs := GenBLSCRS(tc.n)
+		m := NewBLS(tc.n, tc.t-1, crs)
+
+		// Picking the first t nodes as things are unweighted
+		signers := make([]int, tc.t)
+		sigmas := make([]bls.G2Jac, tc.t)
+		for i := 0; i < tc.t; i++ {
+			signers[i] = i
+			sigmas[i] = m.psign(msg, m.pp.signers[i])
+		}
+
+		var sigma bls.G2Jac
+		b.Run(tc.name+"-agg", func(b *testing.B) {
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
 				sigmasAff := make([]bls.G2Affine, len(signers))

@@ -65,7 +65,7 @@ func BenchmarkMulSigUW(b *testing.B) {
 		}
 
 		var msig MultSignature
-		b.Run(tc.name+"-com", func(b *testing.B) {
+		b.Run(tc.name+"-agg", func(b *testing.B) {
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
 				msig = m.combine(signers, sigmas)

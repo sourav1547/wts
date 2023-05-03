@@ -22,14 +22,16 @@ import (
 	"github.com/consensys/gnark-crypto/signature/eddsa"
 	"github.com/consensys/gnark/backend"
 	"github.com/consensys/gnark/backend/groth16"
+	"github.com/consensys/gnark/backend/plonk"
 	"github.com/consensys/gnark/frontend"
 	"github.com/consensys/gnark/frontend/cs/r1cs"
+	"github.com/consensys/gnark/frontend/cs/scs"
 	"github.com/consensys/gnark/std/algebra/twistededwards"
 	"github.com/consensys/gnark/std/hash/mimc"
 	"github.com/consensys/gnark/test"
 )
 
-const NUM_NODES = 1024
+const NUM_NODES = 8 // Indicates the number of signers
 
 type mtsCircuit struct {
 	curveID      tedwards.ID
@@ -167,7 +169,7 @@ func TestMts(t *testing.T) {
 	assert.ProverSucceeded(&circuit, &witness, test.WithCurves(snarkCurve), test.WithBackends(backend.GROTH16), test.NoFuzzing(), test.NoSerialization())
 }
 
-func BenchmarkMts(b *testing.B) {
+func BenchmarkSNARK(b *testing.B) {
 	type testData struct {
 		hash  hash.Hash
 		curve tedwards.ID
@@ -251,7 +253,6 @@ func BenchmarkMts(b *testing.B) {
 	publicWitness, _ := fwitness.Public()
 
 	// Testing plonk
-	/**
 	ccsp, _ := frontend.Compile(ecc.BLS12_381.ScalarField(), scs.NewBuilder, &circuit)
 	srs, _ := test.NewKZGSRS(ccsp)
 	pkp, vkp, _ := plonk.Setup(ccsp, srs)
@@ -269,7 +270,6 @@ func BenchmarkMts(b *testing.B) {
 			plonk.Verify(pfp, vkp, publicWitness)
 		}
 	})
-	**/
 
 	// Testing groth16
 	ccsg, _ := frontend.Compile(ecc.BLS12_381.ScalarField(), r1cs.NewBuilder, &circuit)

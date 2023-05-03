@@ -1,6 +1,7 @@
 package wts
 
 import (
+	"flag"
 	"fmt"
 	"math/big"
 	"math/rand"
@@ -11,6 +12,8 @@ import (
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
 	"github.com/stretchr/testify/assert"
 )
+
+var NUM_NODES = flag.Int("signers", 1<<8, "Number of Signers")
 
 func BenchmarkCompF(b *testing.B) {
 	logN := 15
@@ -114,7 +117,8 @@ func TestKeyGen(t *testing.T) {
 }
 
 func BenchmarkKeyGen(b *testing.B) {
-	n := 1 << 10
+	flag.Parse()
+	n := *NUM_NODES
 
 	weights := make([]int, n)
 	for i := 0; i < n; i++ {
@@ -154,7 +158,9 @@ func BenchmarkCComp2(b *testing.B) {
 }
 
 func BenchmarkGenCRS(b *testing.B) {
-	n := 1 << 10
+	flag.Parse()
+	n := *NUM_NODES
+
 	weights := make([]int, n)
 	for i := 0; i < n; i++ {
 		weights[i] = i
@@ -169,6 +175,7 @@ func BenchmarkGenCRS(b *testing.B) {
 
 func TestPreProcess(t *testing.T) {
 	n := 1 << 5
+
 	weights := make([]int, n)
 	for i := 0; i < n; i++ {
 		weights[i] = i
@@ -252,7 +259,7 @@ func TestBin(t *testing.T) {
 	assert.Equal(t, lhs.Equal(&rhs), true, "Proving weights!")
 }
 
-func TestWTSPSign(t *testing.T) {
+func TestWTS(t *testing.T) {
 	msg := []byte("hello world")
 	roMsg, _ := bls.HashToG2(msg, []byte{})
 
@@ -270,25 +277,24 @@ func TestWTSPSign(t *testing.T) {
 	var sigmas []bls.G2Jac
 	ths := 0
 	for i := 0; i < n; i++ {
-		// if rand.Intn(2) == 1 {
 		signers = append(signers, i)
 		sigmas = append(sigmas, w.psign(msg, w.signers[i]))
 		ths += weights[i]
-		// }
 	}
 
 	for i, idx := range signers {
 		assert.Equal(t, w.pverify(roMsg, sigmas[i], w.signers[idx].pKeyAff), true)
 	}
-	fmt.Println("Signers ", len(signers), "Threshold", ths)
 
 	sig := w.combine(signers, sigmas)
 	assert.Equal(t, w.gverify(msg, sig, ths), true)
 }
 
 func BenchmarkWTS(b *testing.B) {
+	flag.Parse()
+	n := *NUM_NODES
+
 	msg := []byte("hello world")
-	n := 1 << 10
 	weights := make([]int, n)
 	for i := 0; i < n; i++ {
 		weights[i] = i

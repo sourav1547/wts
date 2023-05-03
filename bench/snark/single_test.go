@@ -26,7 +26,7 @@ import (
 // The witness has a
 //   - secret part --> known to the prover only
 //   - public part --> known to the prover and the verifier
-type ECircuit struct {
+type EDDSACircuit struct {
 	PublicKey PublicKey         `gnark:",public"`
 	Signature Signature         `gnark:",public"`
 	Message   frontend.Variable `gnark:",public"`
@@ -35,7 +35,7 @@ type ECircuit struct {
 // Define declares the circuit logic. The compiler then produces a list of constraints
 // which must be satisfied (valid witness) in order to create a valid zk-SNARK
 // This circuit verifies an EdDSA signature.
-func (circuit *ECircuit) Define(api frontend.API) error {
+func (circuit *EDDSACircuit) Define(api frontend.API) error {
 	// set the twisted edwards curve to use
 	curve, err := twistededwards.NewEdCurve(api, tedwards.BN254)
 	if err != nil {
@@ -60,7 +60,7 @@ func (circuit *ECircuit) Define(api frontend.API) error {
 	return VerifyS(curve, circuit.Signature, circuit.Message, circuit.PublicKey, &mimc)
 }
 
-func TestEBasic(t *testing.T) {
+func TestEDDSAGroth16(t *testing.T) {
 	assert := test.NewAssert(t)
 
 	type testData struct {
@@ -83,7 +83,7 @@ func TestEBasic(t *testing.T) {
 	// t.Log("msg to sign", msg.String())
 	msgData := msg.Bytes()
 
-	var assignment ECircuit
+	var assignment EDDSACircuit
 	assignment.Message = msg
 
 	privKey, err := eddsa.New(conf.curve, randomness)
@@ -102,7 +102,7 @@ func TestEBasic(t *testing.T) {
 	assignment.Signature.Assign(snarkCurve, signature)
 
 	// groth16 example here
-	var gcircuit ECircuit
+	var gcircuit EDDSACircuit
 	ccs, _ := frontend.Compile(ecc.BN254.ScalarField(), r1cs.NewBuilder, &gcircuit)
 	witness, _ := frontend.NewWitness(&assignment, ecc.BN254.ScalarField())
 	publicWitness, _ := witness.Public()
@@ -113,7 +113,7 @@ func TestEBasic(t *testing.T) {
 	assert.NoError(err, "Successful verification")
 }
 
-func TestEBasicP(t *testing.T) {
+func TestEDDSAPlonk(t *testing.T) {
 	assert := test.NewAssert(t)
 
 	type testData struct {
@@ -133,7 +133,7 @@ func TestEBasicP(t *testing.T) {
 	msg.Rand(randomness, snarkField)
 	msgData := msg.Bytes()
 
-	var assignment ECircuit
+	var assignment EDDSACircuit
 	assignment.Message = msg
 
 	privKey, err := eddsa.New(conf.curve, randomness)
@@ -148,7 +148,7 @@ func TestEBasicP(t *testing.T) {
 	assignment.Signature.Assign(snarkCurve, signature)
 
 	// plonk example here
-	var circuit ECircuit
+	var circuit EDDSACircuit
 	ccs, _ := frontend.Compile(ecc.BN254.ScalarField(), scs.NewBuilder, &circuit)
 	witness, _ := frontend.NewWitness(&assignment, ecc.BN254.ScalarField())
 	publicWitness, _ := witness.Public()
