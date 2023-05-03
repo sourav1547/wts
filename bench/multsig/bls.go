@@ -4,11 +4,12 @@ import (
 	"fmt"
 	"math/big"
 
+	wts "wts/src"
+
 	"github.com/consensys/gnark-crypto/ecc"
 	bls "github.com/consensys/gnark-crypto/ecc/bls12-381"
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr/fft"
-	wts "github.com/sourav1547/wts/src"
 )
 
 type BLSParty struct {

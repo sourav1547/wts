@@ -4,9 +4,10 @@ import (
 	"fmt"
 	"math/big"
 
+	wts "wts/src"
+
 	bls "github.com/consensys/gnark-crypto/ecc/bls12-381"
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
-	wts "github.com/sourav1547/wts/src"
 )
 
 type MultSigParams struct {

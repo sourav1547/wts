@@ -39,6 +39,7 @@ func BenchmarkBLSUW(b *testing.B) {
 		name string
 		n, t int
 	}{
+		{"64", 64, 64},
 		{"256", 256, 256},
 		{"1024", 1024, 1024},
 		{"4096", 4096, 4096},

@@ -1,4 +1,4 @@
-module github.com/sourav1547/wts
+module wts
 
 go 1.19
 

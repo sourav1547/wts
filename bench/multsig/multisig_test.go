@@ -35,11 +35,12 @@ func TestMultSig(t *testing.T) {
 	assert.Equal(t, m.gverify(roMsg, msig), true)
 }
 
-func BenchmarkMulSigUW(b *testing.B) {
+func BenchmarkMultSigUW(b *testing.B) {
 	testCases := []struct {
 		name string
 		n, t int
 	}{
+		{"64", 64, 64},
 		{"256", 256, 256},
 		{"1024", 1024, 1024},
 		{"4096", 4096, 4096},
