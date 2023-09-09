@@ -44,6 +44,45 @@ func GetLagAtSlow(at fr.Element, indices []fr.Element) []fr.Element {
 	return results
 }
 
+func GetAllLagAt(N uint64, at fr.Element) []fr.Element {
+	return GetAllLagAtWithOmegas(RootsOfUnity(N), at)
+}
+
+func GetAllLagAtWithOmegas(omegas []fr.Element, at fr.Element) []fr.Element {
+	N := len(omegas)
+
+	// Z(at) = at^N - 1
+	var Zat fr.Element
+	Zat.Exp(at, big.NewInt(int64(N)))
+	Zat.Sub(&Zat, new(fr.Element).SetUint64(1))
+
+	// rootsAt = (at - \omega^i)
+	roots := make([]fr.Element, N)
+	for i := 0; i < N; i++ {
+		roots[i].Sub(&at, &omegas[i])
+	}
+	// Batch inversion for 1/(at - \omega^i)
+	roots = fr.BatchInvert(roots)
+
+	// Z(X) = X^N - 1
+	// Z'(X) = N X^{N-1}
+	// X^{N-1} = \omega^{(N-1)}^i
+	Nel := fr.NewElement(uint64(N))
+	denominators := make([]fr.Element, N)
+	denominators[0].Set(&Nel)
+	for i := 1; i < N; i++ {
+		denominators[i].Mul(&denominators[i-1], &omegas[N-1])
+	}
+	// Batch inversion for 1/N \omega^{(N-1)}^i
+	denominators = fr.BatchInvert(denominators)
+
+	for i := 0; i < N; i++ {
+		// numerator = Z(at)/(at - \omega^i)
+		roots[i].Mul(&Zat, &roots[i])
+		denominators[i].Mul(&roots[i], &denominators[i])
+	}
+	return denominators
+}
 
 func GetLagAt(N uint64, at fr.Element, indices []int) []fr.Element {
 	return GetLagAtWithOmegas(RootsOfUnity(N), at, indices)
