@@ -8,6 +8,29 @@ import (
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr/fft"
 )
 
+func TestGetAllLagAt(t *testing.T) {
+	n := 16
+
+	dom := fft.NewDomain(uint64(n))
+	omega := dom.Generator
+	omegas := make([]fr.Element, n)
+	omegas[0] = fr.One()
+	for i := 1; i < n; i++ {
+		omegas[i].Mul(&omega, &omegas[i-1])
+	}
+	var tau fr.Element
+	tau.SetRandom()
+
+	expected := GetLagAtSlow(tau, omegas)
+	actual := GetAllLagAt(uint64(n), tau)
+
+	for i := 0; i < len(expected); i++ {
+		if !actual[i].Equal(&expected[i]) {
+			t.Errorf("%d: Expected %s, got %s", i, expected[i].String(), actual[i].String())
+		}
+	}
+}
+
 func TestGetLagAt(t *testing.T) {
 	n := 12
 
@@ -135,8 +158,9 @@ func BenchmarkGetLagAt(b *testing.B) {
 				GetLagAt0WithOmegas(allOmegas, indices)
 			}
 		})
+		b.Run(fmt.Sprintf("GetAllLagAt/%d", n), func(b *testing.B) {
 			for i := 0; i < b.N; i++ {
-				GetLagAtWithOmegas(allOmegas, fr.NewElement(0), indices)
+				GetAllLagAtWithOmegas(allOmegas, at)
 			}
 		})
 	}
