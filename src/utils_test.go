@@ -1,6 +1,7 @@
 package wts
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
@@ -17,14 +18,46 @@ func TestGetLagAt(t *testing.T) {
 	for i := 1; i < n; i++ {
 		omegas[i].Mul(&omega, &omegas[i-1])
 	}
-
 	var tau fr.Element
-	tau.SetRandom()
+	tau.SetInt64(2)
 
-	expected := GetLagAtSlow(tau, omegas)
-	actual := GetLagAt(tau, omegas)
+	indices := []int{1, 5, 7, 9, 11}
 
-	for i := 0; i < n; i++ {
+	expectedOmegas := make([]fr.Element, len(indices))
+	for i := 0; i < len(indices); i++ {
+		expectedOmegas[i] = omegas[indices[i]]
+	}
+	expected := GetLagAtSlow(tau, expectedOmegas)
+	actual := GetLagAtNoOmegas(uint64(n), tau, indices)
+
+	for i := 0; i < len(expected); i++ {
+		if !actual[i].Equal(&expected[i]) {
+			t.Errorf("%d: Expected %s, got %s", i, expected[i].String(), actual[i].String())
+		}
+	}
+}
+
+func TestGetLagAt0(t *testing.T) {
+	n := 12
+
+	dom := fft.NewDomain(uint64(n))
+	omega := dom.Generator
+	omegas := make([]fr.Element, n)
+	omegas[0] = fr.One()
+	for i := 1; i < n; i++ {
+		omegas[i].Mul(&omega, &omegas[i-1])
+	}
+
+	indices := []int{1, 5, 7, 9, 11}
+
+	expectedOmegas := make([]fr.Element, len(indices))
+	for i := 0; i < len(indices); i++ {
+		expectedOmegas[i] = omegas[indices[i]]
+	}
+	expected := GetLagAtSlow(fr.NewElement(0), expectedOmegas)
+	actual := GetLagAt0NoOmegas(uint64(n), indices)
+
+	for i := 0; i < len(expected); i++ {
 		if !actual[i].Equal(&expected[i]) {
 			t.Errorf("%d: Expected %s, got %s", i, expected[i].String(), actual[i].String())
 		}
@@ -36,7 +69,6 @@ func TestGetCoefficientsFromRoots(t *testing.T) {
 	roots := []fr.Element{newElem(1), newElem(2), newElem(3), newElem(4), newElem(5)}
 	// X^5 - 15X^4 + 85X^3 - 225X^2 + 274X - 120
 	expected := []fr.Element{newElem(-120), newElem(274), newElem(-225), newElem(85), newElem(-15), newElem(1)}
-
 	actual := GetCoefficientsFromRoots(roots)
 	for i := 0; i < len(expected); i++ {
 		if !actual[i].Equal(&expected[i]) {
@@ -59,7 +91,6 @@ func TestMulPolynomials(t *testing.T) {
 			expected[i+j].Add(&expected[i+j], new(fr.Element).Mul(&f[i], &g[j]))
 		}
 	}
-
 	actual := MulPolynomials(f, g)
 	for i := 0; i < len(expected); i++ {
 		if !actual[i].Equal(&expected[i]) {
@@ -68,19 +99,46 @@ func TestMulPolynomials(t *testing.T) {
 	}
 }
 
+func BenchmarkGetLagAt(b *testing.B) {
+	var at fr.Element
+	for _, n := range []uint64{128, 256, 512, 1024, 2048, 4096, 16384, 32768} {
+		omega := fft.NewDomain(n).Generator
+		omegas := make([]fr.Element, n)
+		omegas[0] = fr.One()
+		for i := 1; i < int(n); i++ {
+			omegas[i].Mul(&omega, &omegas[i-1])
+		}
+		at.SetRandom()
+		indices := GetRangeTo(int(n))
+		omegasAtIndices := make([]fr.Element, len(indices))
+		for i := 0; i < len(indices); i++ {
+			omegasAtIndices[i] = omegas[indices[i]]
+		}
+		b.Run(fmt.Sprintf("GetLagAtSlow/%d", n), func(b *testing.B) {
+			for i := 0; i < b.N; i++ {
+				GetLagAtSlow(at, omegasAtIndices)
+			}
+		})
+		b.Run(fmt.Sprintf("GetLagAtNoOmegas/%d", n), func(b *testing.B) {
+			for i := 0; i < b.N; i++ {
+				GetLagAtNoOmegas(n, at, indices)
+			}
+		})
+		allOmegas := RootsOfUnity(n)
+		b.Run(fmt.Sprintf("GetLagAtWithOmegas/%d", n), func(b *testing.B) {
+			for i := 0; i < b.N; i++ {
+				GetLagAtWithOmegas(allOmegas, at, indices)
+			}
+		})
+		b.Run(fmt.Sprintf("GetLagAt0WithOmegas/%d", n), func(b *testing.B) {
+			for i := 0; i < b.N; i++ {
+				GetLagAtWithOmegas(allOmegas, fr.NewElement(0), indices)
+			}
+		})
+	}
+}
+
 func newElem(x int64) (z fr.Element) {
 	z.SetInt64(x)
 	return
-}
-
-func elementsString(e []fr.Element) string {
-	s := "["
-	for i := 0; i < len(e); i++ {
-		s += e[i].String()
-		if i != len(e)-1 {
-			s += ", "
-		}
-	}
-	s += "]"
-	return s
 }
