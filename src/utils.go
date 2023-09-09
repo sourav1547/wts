@@ -50,6 +50,7 @@ func GetLagAtNoOmegas(N uint64, at fr.Element, indices []int) []fr.Element {
 
 // This function returns the lagrange coefficients for a given set of indices when evaluated at a specific point
 func GetLagAtWithOmegas(omegas []fr.Element, at fr.Element, indices []int) []fr.Element {
+	N := len(omegas)
 	n := len(indices)
 
 	// Z(X) = \prod_{i in T} (X - \omega^i)
@@ -71,7 +72,7 @@ func GetLagAtWithOmegas(omegas []fr.Element, at fr.Element, indices []int) []fr.
 	// Set Z as Z'(X)
 	Differentiate(&Z)
 
-	dom := GetDomain(uint64(len(omegas)))
+	dom := GetDomain(uint64(N))
 	Z = append(Z, GetZeros(dom.Cardinality-uint64(len(Z)))...)
 	fft.BitReverse(Z)
 	// Z'(\omega^i) for i..N
