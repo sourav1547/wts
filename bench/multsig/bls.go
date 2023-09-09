@@ -200,7 +200,7 @@ func (b *BLS) combine(signers []int, sigmas []bls.G2Affine) bls.G2Jac {
 	for i := 0; i <= b.t; i++ {
 		indices[i] = signers[i]
 	}
-	lagH := wts.GetLagAt0NoOmegas(uint64(b.n), indices)
+	lagH := wts.GetLagAt0(uint64(b.n), indices)
 
 	var thSig bls.G2Jac
 	thSig.MultiExp(sigmas, lagH, ecc.MultiExpConfig{})

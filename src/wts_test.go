@@ -84,7 +84,7 @@ func TestKeyGen(t *testing.T) {
 	}
 
 	// Checking whether the public key and hTaus is computed correctly
-	lagH := GetLagAtNoOmegas(uint64(n), w.crs.tau, GetRangeTo(n))
+	lagH := GetAllLagAtWithOmegas(w.crs.H, w.crs.tau)
 	var skTau fr.Element
 
 	for i := 0; i < n; i++ {
@@ -192,7 +192,7 @@ func TestPreProcess(t *testing.T) {
 	zTau.Sub(&zTau, &one)
 
 	var lhsG, rhsG, qi bls.G1Affine
-	lagH := GetLagAtNoOmegas(uint64(n), w.crs.tau, GetRangeTo(n))
+	lagH := GetAllLagAtWithOmegas(w.crs.H, w.crs.tau)
 	for i := 0; i < n; i++ {
 		lhsG.ScalarMultiplication(&w.pp.pComm, lagH[i].BigInt(&big.Int{}))
 		rhsG.ScalarMultiplication(&w.signers[i].pKeyAff, lagH[i].BigInt(&big.Int{}))
