@@ -44,7 +44,8 @@ func GetLagAtSlow(at fr.Element, indices []fr.Element) []fr.Element {
 	return results
 }
 
-func GetLagAtNoOmegas(N uint64, at fr.Element, indices []int) []fr.Element {
+
+func GetLagAt(N uint64, at fr.Element, indices []int) []fr.Element {
 	return GetLagAtWithOmegas(RootsOfUnity(N), at, indices)
 }
 
@@ -95,7 +96,7 @@ func GetLagAtWithOmegas(omegas []fr.Element, at fr.Element, indices []int) []fr.
 	return Z[:n]
 }
 
-func GetLagAt0NoOmegas(N uint64, indices []int) []fr.Element {
+func GetLagAt0(N uint64, indices []int) []fr.Element {
 	return GetLagAt0WithOmegas(RootsOfUnity(N), indices)
 }
 

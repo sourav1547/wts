@@ -28,7 +28,7 @@ func TestGetLagAt(t *testing.T) {
 		expectedOmegas[i] = omegas[indices[i]]
 	}
 	expected := GetLagAtSlow(tau, expectedOmegas)
-	actual := GetLagAtNoOmegas(uint64(n), tau, indices)
+	actual := GetLagAt(uint64(n), tau, indices)
 
 	for i := 0; i < len(expected); i++ {
 		if !actual[i].Equal(&expected[i]) {
@@ -55,7 +55,7 @@ func TestGetLagAt0(t *testing.T) {
 		expectedOmegas[i] = omegas[indices[i]]
 	}
 	expected := GetLagAtSlow(fr.NewElement(0), expectedOmegas)
-	actual := GetLagAt0NoOmegas(uint64(n), indices)
+	actual := GetLagAt0(uint64(n), indices)
 
 	for i := 0; i < len(expected); i++ {
 		if !actual[i].Equal(&expected[i]) {
@@ -119,18 +119,22 @@ func BenchmarkGetLagAt(b *testing.B) {
 				GetLagAtSlow(at, omegasAtIndices)
 			}
 		})
-		b.Run(fmt.Sprintf("GetLagAtNoOmegas/%d", n), func(b *testing.B) {
-			for i := 0; i < b.N; i++ {
-				GetLagAtNoOmegas(n, at, indices)
-			}
-		})
+		// b.Run(fmt.Sprintf("GetLagAtNoOmegas/%d", n), func(b *testing.B) {
+		// 	for i := 0; i < b.N; i++ {
+		// 		GetLagAtNoOmegas(n, at, indices)
+		// 	}
+		// })
 		allOmegas := RootsOfUnity(n)
-		b.Run(fmt.Sprintf("GetLagAtWithOmegas/%d", n), func(b *testing.B) {
+		b.Run(fmt.Sprintf("GetLagAt/%d", n), func(b *testing.B) {
 			for i := 0; i < b.N; i++ {
 				GetLagAtWithOmegas(allOmegas, at, indices)
 			}
 		})
-		b.Run(fmt.Sprintf("GetLagAt0WithOmegas/%d", n), func(b *testing.B) {
+		b.Run(fmt.Sprintf("GetLagAt0/%d", n), func(b *testing.B) {
+			for i := 0; i < b.N; i++ {
+				GetLagAt0WithOmegas(allOmegas, indices)
+			}
+		})
 			for i := 0; i < b.N; i++ {
 				GetLagAtWithOmegas(allOmegas, fr.NewElement(0), indices)
 			}
