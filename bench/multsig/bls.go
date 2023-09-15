@@ -191,12 +191,16 @@ func (b *BLS) combine(signers []int, sigmas []bls.G2Affine) bls.G2Jac {
 	}
 
 	// Get appropriate lagrange coefficients
-	points := make([]fr.Element, b.t+1)
+	// points := make([]fr.Element, b.t+1)
+	// for i := 0; i <= b.t; i++ {
+	// 	points[i] = b.crs.H[signers[i]]
+	// }
+	// var zero fr.Element
+	indices := make([]int, b.t+1)
 	for i := 0; i <= b.t; i++ {
-		points[i] = b.crs.H[signers[i]]
+		indices[i] = signers[i]
 	}
-	var zero fr.Element
-	lagH := wts.GetLagAt(zero, points)
+	lagH := wts.GetLagAt0(uint64(b.n), indices)
 
 	var thSig bls.G2Jac
 	thSig.MultiExp(sigmas, lagH, ecc.MultiExpConfig{})

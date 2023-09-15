@@ -108,7 +108,7 @@ func GenCRS(n int) CRS {
 	h2a := new(bls.G2Affine).ScalarMultiplication(&g2a, hF.BigInt(&big.Int{}))
 	hTauHAff := new(bls.G2Affine).ScalarMultiplication(&g2a, tauH.BigInt(&big.Int{}))
 
-	domain := fft.NewDomain(uint64(n))
+	domain := GetDomain(uint64(n))
 	omH := domain.Generator
 	H := make([]fr.Element, n)
 	H[0].SetOne()
@@ -149,9 +149,9 @@ func GenCRS(n int) CRS {
 	vHTau := new(bls.G2Jac).ScalarMultiplication(&g2, tauN.BigInt(&big.Int{}))
 
 	// Computing Lagrange in the exponent
+	lagH := GetAllLagAtWithOmegas(H, tau)
 	// OPT: Current implementation of GetLagAt is quadratic, we can make it O(nlogn)
-	lagH := GetLagAt(tau, H)
-	lagL := GetLagAt(tau, L) // OPT: Can we reuse the denominators from GetLag(tau,H)?
+	lagL := GetLagAtSlow(tau, L) // OPT: Can we reuse the denominators from GetLag(tau,H)?
 	lagHTaus := bls.BatchScalarMultiplicationG1(&g1a, lagH)
 	lagHTausH := bls.BatchScalarMultiplicationG1(h1a, lagH)
 	lag2HTaus := bls.BatchScalarMultiplicationG2(&g2a, lagH)
@@ -447,7 +447,7 @@ func (w *WTS) secretPf(signers []int) bls.G1Jac {
 	// Computing the second term
 	// OPT: Can possibly optimize this
 	// OPT: Can also send the indices of the signers while computing lagH0
-	lagH0 := GetLagAt(fr.NewElement(uint64(0)), w.crs.H)
+	lagH0 := GetAllLagAtWithOmegas(w.crs.H, fr.NewElement(0))
 	for i, idx := range signers {
 		expts[i] = lagH0[idx]
 		bases[i] = w.pp.aTaus[idx]
